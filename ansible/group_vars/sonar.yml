@@ -1,0 +1,4 @@
+# group_vars/sonar.yml
+sonar_image: "sonarqube:community"
+sonar_http_port: 9000
+sonar_memory: "2g"

@@ -1,0 +1,38 @@
+# project/ansible/site.yml
+# K8s 1.28.1 cluster setup via kubeadm
+#
+# Play 1: all nodes  → common role (steps 1–6)
+# Play 2: master     → master role (steps 7–10)
+# Play 3: workers    → workers role (join cluster)
+
+---
+- name: Prepare all Kubernetes nodes
+  hosts: master:workers
+  become: yes
+  gather_facts: yes
+  serial: 1
+
+  roles:
+    - common
+
+- name: Initialize and configure Kubernetes master
+  hosts: master
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - master
+
+- name: Join worker nodes to the cluster
+  hosts: workers
+  become: yes
+  gather_facts: yes
+  serial: 1
+
+  roles:
+    - workers
+
+  post_tasks:
+    - name: Cluster setup finished
+      ansible.builtin.debug:
+        msg: "Worker {{ inventory_hostname }} configuration complete."

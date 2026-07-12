@@ -1,0 +1,50 @@
+---
+# roles/trivy — install Aqua Trivy (vulnerability / misconfig / secret scanner)
+# Used on the Jenkins host so pipelines can run: trivy fs . | trivy image ...
+
+- name: Install Trivy apt dependencies
+  ansible.builtin.apt:
+    name:
+      - wget
+      - apt-transport-https
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+
+- name: Ensure keyrings directory exists
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Add Trivy GPG key
+  ansible.builtin.shell: |
+    wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+      | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+  args:
+    creates: /usr/share/keyrings/trivy.gpg
+
+- name: Add Trivy apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/trivy.list
+    mode: "0644"
+    content: >
+      deb [signed-by=/usr/share/keyrings/trivy.gpg]
+      https://aquasecurity.github.io/trivy-repo/deb
+      {{ ansible_distribution_release }} main
+
+- name: Install Trivy
+  ansible.builtin.apt:
+    name: trivy
+    state: latest
+    update_cache: yes
+
+- name: Confirm Trivy version
+  ansible.builtin.command: trivy --version
+  register: trivy_version
+  changed_when: false
+
+- name: Show Trivy version
+  ansible.builtin.debug:
+    var: trivy_version.stdout

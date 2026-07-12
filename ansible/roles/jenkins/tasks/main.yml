@@ -1,0 +1,66 @@
+---
+# roles/jenkins — run Jenkins container + make Trivy available to pipelines
+# Ports: 8080 (UI), 50000 (agents)
+
+- name: Create Jenkins data volume
+  ansible.builtin.command: docker volume create jenkins_home
+  changed_when: false
+
+- name: Check if Jenkins container exists
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
+- name: Start existing Jenkins container
+  ansible.builtin.command: docker start jenkins
+  when: "'jenkins' in docker_names.stdout_lines"
+  register: jenkins_start
+  changed_when: jenkins_start.rc == 0
+  failed_when: false
+
+- name: Ensure Jenkins restarts when Docker/VM starts
+  ansible.builtin.command: docker update --restart unless-stopped jenkins
+  when: "'jenkins' in docker_names.stdout_lines"
+  changed_when: true
+
+- name: Run Jenkins container
+  ansible.builtin.command: >
+    docker run -d
+    --name jenkins
+    --restart unless-stopped
+    --memory {{ jenkins_memory | default('2g') }}
+    -p {{ jenkins_http_port }}:8080
+    -p {{ jenkins_agent_port }}:50000
+    -v jenkins_home:/var/jenkins_home
+    -v /var/run/docker.sock:/var/run/docker.sock
+    -v /usr/bin/trivy:/usr/local/bin/trivy:ro
+    {{ jenkins_image }}
+  when: "'jenkins' not in docker_names.stdout_lines"
+
+- name: Wait for Jenkins HTTP port
+  ansible.builtin.wait_for:
+    port: "{{ jenkins_http_port }}"
+    host: 127.0.0.1
+    delay: 5
+    timeout: 180
+
+- name: Copy Trivy binary into Jenkins container (existing containers without mount)
+  ansible.builtin.command: docker cp /usr/bin/trivy jenkins:/usr/local/bin/trivy
+  when: "'jenkins' in docker_names.stdout_lines"
+  register: trivy_cp
+  changed_when: trivy_cp.rc == 0
+  failed_when: false
+
+- name: Confirm Trivy inside Jenkins container
+  ansible.builtin.command: docker exec jenkins trivy --version
+  register: trivy_in_jenkins
+  changed_when: false
+  failed_when: false
+
+- name: Confirm Jenkins is up
+  ansible.builtin.debug:
+    msg: >
+      Jenkins on port {{ jenkins_http_port }} (agent {{ jenkins_agent_port }}).
+      URL: http://{{ ansible_host }}:{{ jenkins_http_port }}
+      Trivy in container: {{ trivy_in_jenkins.stdout | default('not detected - re-run after trivy role') }}
+      Initial admin password: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword

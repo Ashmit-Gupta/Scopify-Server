@@ -1,0 +1,3 @@
+---
+# Worker-only variables (inherits all.yml)
+# Worker join is handled after master init — see roles/workers/tasks/main.yml

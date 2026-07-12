@@ -1,0 +1,32 @@
+---
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - ap-south-1
+
+# Matches project/terraform/terraform.tfvars → project_name
+filters:
+  tag:Ansible: "true"
+  tag:Project: gaming-board-cluster
+  instance-state-name: running
+
+hostnames:
+  - tag:Name
+  - instance-id
+
+compose:
+  ansible_host: public_ip_address
+
+groups:
+  master: "ec2_tags.Role == 'master'"
+  workers: "ec2_tags.Role == 'worker-1' or ec2_tags.Role == 'worker-2'"
+  jenkins: "ec2_tags.Role == 'jenkins'"
+  sonar: "ec2_tags.Role == 'sonar'"
+  nexus: "ec2_tags.Role == 'nexus'"
+  tools: "ec2_tags.Role == 'jenkins' or ec2_tags.Role == 'sonar' or ec2_tags.Role == 'nexus'"
+
+keyed_groups:
+  - key: ec2_tags.Project
+    prefix: project
+
+strict: true

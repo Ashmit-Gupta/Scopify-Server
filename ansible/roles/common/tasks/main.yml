@@ -1,0 +1,158 @@
+# Steps 1–6 — Master & Worker nodes
+
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Disable swap (required for kubeadm)
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Remove swap from fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '\sswap\s'
+    state: absent
+
+- name: Load kernel modules required by Kubernetes
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ k8s_kernel_modules }}"
+
+- name: Persist Kubernetes kernel modules across reboots
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: "{{ k8s_kernel_modules | join('\n') }}\n"
+    mode: "0644"
+
+- name: Apply Kubernetes sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop: "{{ k8s_sysctl_settings }}"
+
+- name: Persist Kubernetes sysctl settings
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-kubernetes.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward = 1
+    mode: "0644"
+
+- name: Install container runtime packages
+  ansible.builtin.apt:
+    name:
+      - containerd
+      - docker.io
+    state: present
+
+- name: Ensure containerd config directory exists
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: "0755"
+
+- name: Generate default containerd config
+  ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
+  args:
+    creates: /etc/containerd/config.toml
+
+- name: Enable SystemdCgroup for containerd (required by kubeadm)
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  register: containerd_cgroup_fix
+
+- name: Restart containerd after cgroup config change
+  ansible.builtin.service:
+    name: containerd
+    state: restarted
+  when: containerd_cgroup_fix.changed
+
+- name: Ensure containerd is running and enabled on boot
+  ansible.builtin.systemd:
+    name: containerd
+    state: started
+    enabled: true
+
+- name: Ensure Docker is running and enabled on boot
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Allow access to Docker socket
+  ansible.builtin.file:
+    path: /var/run/docker.sock
+    mode: "0666"
+
+- name: Configure crictl to use containerd socket
+  ansible.builtin.copy:
+    dest: /etc/crictl.yaml
+    mode: "0644"
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+
+
+- name: Install Kubernetes apt dependencies
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+
+- name: Ensure apt keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Add Kubernetes GPG key
+  ansible.builtin.shell: |
+    curl -fsSL {{ kubernetes_apt_key_url }} | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: "{{ kubernetes_apt_repo }}\n"
+    mode: "0644"
+
+- name: Refresh apt cache after adding Kubernetes repo
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Install Kubernetes components
+  ansible.builtin.apt:
+    name:
+      - "kubeadm={{ kubeadm_pkg_version }}"
+      - "kubelet={{ kubelet_pkg_version }}"
+      - "kubectl={{ kubectl_pkg_version }}"
+    state: present
+
+- name: Hold Kubernetes packages at current version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubeadm
+    - kubelet
+    - kubectl
+
+- name: Confirm common node setup
+  ansible.builtin.debug:
+    msg: "Node {{ inventory_hostname }} ready — Docker + Kubernetes {{ kubernetes_version }} packages installed."

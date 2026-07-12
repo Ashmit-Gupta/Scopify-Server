@@ -1,0 +1,211 @@
+# Steps 7–10 — Master node only
+#
+# Resilience against the common failure mode:
+#   kubeadm init times out while installing CoreDNS → no ~/.kube/config → kubectl → :8080
+#
+# Strategy:
+#   1) Pre-pull images (shorter init)
+#   2) kubeadm init WITHOUT CoreDNS/kube-proxy addons
+#   3) Copy kubeconfig for ubuntu ASAP
+#   4) Wait until API answers
+#   5) Install addons + Calico with retries
+#   6) Verify kubectl works before finishing
+
+---
+- name: Load kernel modules required by Kubernetes
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ k8s_kernel_modules }}"
+
+- name: Apply Kubernetes sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop: "{{ k8s_sysctl_settings }}"
+
+- name: Ensure containerd and kubelet are running
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop:
+    - containerd
+    - kubelet
+
+- name: Check if admin.conf already exists
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_admin_conf
+
+- name: Check if API is already listening (partial vs healthy)
+  ansible.builtin.wait_for:
+    port: 6443
+    host: 127.0.0.1
+    timeout: 5
+  register: api_already_up
+  ignore_errors: true
+  when: k8s_admin_conf.stat.exists
+
+- name: Fail clearly on broken partial init (admin.conf present, API down)
+  ansible.builtin.fail:
+    msg: >
+      Found /etc/kubernetes/admin.conf but the API on :6443 is not up.
+      This is a broken partial kubeadm init. On Master run:
+        sudo kubeadm reset -f
+        sudo rm -rf /etc/cni/net.d /var/lib/etcd
+        sudo systemctl restart containerd kubelet
+      Then re-run: ansible-playbook site.yml --limit master
+  when:
+    - k8s_admin_conf.stat.exists
+    - api_already_up is failed
+
+- name: Pre-pull Kubernetes control-plane images
+  ansible.builtin.command: "kubeadm config images pull --kubernetes-version=v{{ kubernetes_version }}"
+  when: not k8s_admin_conf.stat.exists
+  register: image_pull
+  retries: 3
+  delay: 20
+  until: image_pull.rc == 0
+  changed_when: true
+
+- name: Initialize Kubernetes master (control plane only, no DNS/proxy addons)
+  ansible.builtin.command: >
+    kubeadm init
+    --kubernetes-version=v{{ kubernetes_version }}
+    --pod-network-cidr={{ pod_network_cidr }}
+    --skip-phases=addon/coredns,addon/kube-proxy
+  when: not k8s_admin_conf.stat.exists
+  register: kubeadm_init
+  async: 900
+  poll: 15
+
+- name: Show kubeadm init output
+  ansible.builtin.debug:
+    var: kubeadm_init.stdout_lines
+  when: kubeadm_init is changed
+
+- name: Re-check admin.conf after init
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_admin_conf
+
+- name: Fail if control plane files were not created
+  ansible.builtin.fail:
+    msg: >
+      kubeadm init did not create /etc/kubernetes/admin.conf.
+      On Master: sudo kubeadm reset -f && sudo systemctl restart containerd kubelet
+      Then re-run ansible-playbook site.yml --limit master
+  when: not k8s_admin_conf.stat.exists
+
+- name: Ensure .kube directory exists for {{ kubeconfig_user }}
+  ansible.builtin.file:
+    path: "/home/{{ kubeconfig_user }}/.kube"
+    state: directory
+    owner: "{{ kubeconfig_user }}"
+    group: "{{ kubeconfig_user }}"
+    mode: "0755"
+
+- name: Copy admin kubeconfig to user home (fixes kubectl localhost:8080)
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ kubeconfig_path }}"
+    remote_src: yes
+    owner: "{{ kubeconfig_user }}"
+    group: "{{ kubeconfig_user }}"
+    mode: "0600"
+
+- name: Wait until Kubernetes API port is open
+  ansible.builtin.wait_for:
+    port: 6443
+    host: 127.0.0.1
+    delay: 5
+    timeout: 300
+
+- name: Wait until API server answers kubectl
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: kubectl get --raw=/readyz
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: api_ready
+  retries: 30
+  delay: 10
+  until: api_ready.rc == 0
+  changed_when: false
+
+- name: Install CoreDNS addon
+  ansible.builtin.command: kubeadm init phase addon coredns
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: coredns_addon
+  retries: 8
+  delay: 20
+  until: coredns_addon.rc == 0
+  changed_when: coredns_addon.rc == 0
+
+- name: Install kube-proxy addon
+  ansible.builtin.command: kubeadm init phase addon kube-proxy
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: kube_proxy_addon
+  retries: 8
+  delay: 20
+  until: kube_proxy_addon.rc == 0
+  changed_when: kube_proxy_addon.rc == 0
+
+- name: Deploy Calico CNI
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: "kubectl apply -f {{ calico_manifest_url }}"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: calico_apply
+  retries: 5
+  delay: 15
+  until: calico_apply.rc == 0
+  changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"
+
+- name: Deploy NGINX Ingress Controller
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: "kubectl apply -f {{ ingress_nginx_manifest_url }}"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ingress_apply
+  retries: 5
+  delay: 15
+  until: ingress_apply.rc == 0
+  changed_when: "'created' in ingress_apply.stdout or 'configured' in ingress_apply.stdout"
+
+- name: Verify kubectl works for {{ kubeconfig_user }}
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: kubectl get nodes
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: nodes_check
+  retries: 12
+  delay: 10
+  until: nodes_check.rc == 0
+  changed_when: false
+
+- name: Show cluster nodes
+  ansible.builtin.debug:
+    var: nodes_check.stdout_lines
+
+- name: Generate worker join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: kubeadm_join_command
+  changed_when: false
+
+- name: Confirm master setup complete
+  ansible.builtin.debug:
+    msg: >
+      Master {{ inventory_hostname }} ready.
+      kubectl works with {{ kubeconfig_path }}.
+      Join command: {{ kubeadm_join_command.stdout }}

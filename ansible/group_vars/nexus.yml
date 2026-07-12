@@ -1,0 +1,4 @@
+# group_vars/nexus.yml
+nexus_image: "sonatype/nexus3:latest"
+nexus_http_port: 8081
+nexus_memory: "2g"

@@ -1,0 +1,96 @@
+# Copy to terraform.tfvars and adjust as needed.
+# 3 K8s + 3 tool VMs on c7i-flex.large
+
+aws_region   = "ap-south-1"
+project_name = "gaming-board-cluster"
+environment  = "dev"
+owner        = "Ashmit"
+
+ami_id           = "ami-01a00762f46d584a1"
+instance_type    = "c7i-flex.large"
+root_volume_size = 25
+root_volume_type = "gp3"
+key_pair_name    = "terraform-key"
+
+allowed_ingress_cidr = "0.0.0.0/0"
+
+security_groups = {
+  cluster = {
+    name        = "gaming-board-cluster-sg"
+    description = "Cluster nodes - SSH, web, SMTP, K8s API, NodePort ranges"
+    ingress_rules = [
+      { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "SMTP", from_port = 25, to_port = 25, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "HTTP", from_port = 80, to_port = 80, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "HTTPS", from_port = 443, to_port = 443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "SMTPS", from_port = 465, to_port = 465, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "Custom TCP (app range)", from_port = 3000, to_port = 10000, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "Kubernetes API server", from_port = 6443, to_port = 6443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "Kubernetes NodePort range", from_port = 30000, to_port = 32767, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+    ]
+  }
+
+  jenkins = {
+    name        = "gaming-board-jenkins-sg"
+    description = "Jenkins - SSH, UI 8080, agent 50000"
+    ingress_rules = [
+      { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "Jenkins UI", from_port = 8080, to_port = 8080, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "Jenkins agent", from_port = 50000, to_port = 50000, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+    ]
+  }
+
+  sonar = {
+    name        = "gaming-board-sonar-sg"
+    description = "SonarQube - SSH, UI 9000"
+    ingress_rules = [
+      { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "SonarQube UI", from_port = 9000, to_port = 9000, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+    ]
+  }
+
+  nexus = {
+    name        = "gaming-board-nexus-sg"
+    description = "Nexus - SSH, UI 8081"
+    ingress_rules = [
+      { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+      { description = "Nexus UI", from_port = 8081, to_port = 8081, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+    ]
+  }
+}
+
+instances = {
+  master = {
+    name                = "Master"
+    security_group_keys = ["cluster"]
+    instance_type       = "c7i-flex.large"
+  }
+  worker-1 = {
+    name                = "worker-1"
+    security_group_keys = ["cluster"]
+    instance_type       = "c7i-flex.large"
+  }
+  worker-2 = {
+    name                = "worker-2"
+    security_group_keys = ["cluster"]
+    instance_type       = "c7i-flex.large"
+  }
+  jenkins = {
+    name                = "Jenkins"
+    security_group_keys = ["jenkins"]
+    instance_type       = "c7i-flex.large"
+    root_volume_size    = 30
+  }
+  sonar = {
+    name                = "Sonar"
+    security_group_keys = ["sonar"]
+    instance_type       = "c7i-flex.large"
+    root_volume_size    = 30
+  }
+  nexus = {
+    name                = "Nexus"
+    security_group_keys = ["nexus"]
+    instance_type       = "c7i-flex.large"
+    root_volume_size    = 40
+  }
+}

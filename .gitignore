@@ -1,0 +1,36 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Local variable files (keep terraform.tfvars.example tracked)
+*.tfvars
+!*.tfvars.example
+
+# SSH / secrets
+*.pem
+*.key
+keys/
+**/.env
+**/.env.*
+!**/.env.example
+
+# Ansible
+*.retry
+.vault_pass
+.vault_pass.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

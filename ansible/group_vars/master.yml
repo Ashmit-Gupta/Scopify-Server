@@ -1,0 +1,5 @@
+---
+# Master-only variables (inherits all.yml)
+
+kubeconfig_user: ubuntu
+kubeconfig_path: "/home/ubuntu/.kube/config"

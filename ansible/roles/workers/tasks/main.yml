@@ -1,0 +1,29 @@
+# Join worker nodes to the cluster (after master init)
+
+---
+- name: Check if node is already joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Resolve join command from master host
+  ansible.builtin.set_fact:
+    join_command: "{{ hostvars[groups['master'][0]].kubeadm_join_command.stdout | default('') }}"
+
+- name: Fail if join command is missing
+  ansible.builtin.fail:
+    msg: >
+      kubeadm join command not found on master. Run the full playbook or master play first:
+      ansible-playbook site.yml --limit master
+  when: join_command == '' and not kubelet_conf.stat.exists
+
+- name: Join worker to cluster
+  ansible.builtin.command: "{{ join_command }}"
+  when:
+    - not kubelet_conf.stat.exists
+    - join_command != ''
+  register: kubeadm_join
+
+- name: Confirm worker joined
+  ansible.builtin.debug:
+    msg: "Worker {{ inventory_hostname }} joined the cluster."

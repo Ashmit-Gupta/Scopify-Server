@@ -1,0 +1,5 @@
+# group_vars/jenkins.yml
+jenkins_image: "jenkins/jenkins:latest"
+jenkins_http_port: 8080
+jenkins_agent_port: 50000
+jenkins_memory: "2g"

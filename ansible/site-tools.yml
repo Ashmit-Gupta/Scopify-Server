@@ -1,0 +1,43 @@
+# project/ansible/site-tools.yml
+# CI/CD tool VMs: Jenkins, SonarQube, Nexus (separate EC2 each)
+#
+# Ports:
+#   Jenkins  -> 8080 (UI), 50000 (agents)
+#   SonarQube -> 9000 (UI)
+#   Nexus    -> 8081 (UI)
+
+---
+- name: Prepare CI/CD tool VMs (packages + Docker)
+  hosts: tools
+  become: yes
+  gather_facts: yes
+  serial: 1
+
+  roles:
+    - packages
+    - docker
+
+- name: Install Trivy and run Jenkins
+  hosts: jenkins
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - trivy
+    - jenkins
+
+- name: Install and run SonarQube
+  hosts: sonar
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - sonarqube
+
+- name: Install and run Nexus
+  hosts: nexus
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - nexus

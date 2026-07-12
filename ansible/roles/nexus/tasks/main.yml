@@ -1,0 +1,52 @@
+---
+# roles/nexus — run Sonatype Nexus Repository 3
+# Port: 8081 (UI)
+
+- name: Create Nexus data volume
+  ansible.builtin.command: docker volume create nexus_data
+  changed_when: false
+
+- name: Fix Nexus volume ownership (UID 200)
+  ansible.builtin.command: >
+    docker run --rm -v nexus_data:/nexus-data busybox
+    chown -R 200:200 /nexus-data
+  changed_when: false
+
+- name: Check if Nexus container exists
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
+- name: Start existing Nexus container
+  ansible.builtin.command: docker start nexus
+  when: "'nexus' in docker_names.stdout_lines"
+  failed_when: false
+
+- name: Ensure Nexus restarts when Docker/VM starts
+  ansible.builtin.command: docker update --restart unless-stopped nexus
+  when: "'nexus' in docker_names.stdout_lines"
+  changed_when: true
+
+- name: Run Nexus container
+  ansible.builtin.command: >
+    docker run -d
+    --name nexus
+    --restart unless-stopped
+    -p {{ nexus_http_port }}:8081
+    -v nexus_data:/nexus-data
+    {{ nexus_image }}
+  when: "'nexus' not in docker_names.stdout_lines"
+
+- name: Wait for Nexus HTTP port
+  ansible.builtin.wait_for:
+    port: "{{ nexus_http_port }}"
+    host: 127.0.0.1
+    delay: 20
+    timeout: 360
+
+- name: Confirm Nexus is up
+  ansible.builtin.debug:
+    msg: >
+      Nexus running on port {{ nexus_http_port }}.
+      Open http://{{ ansible_host }}:{{ nexus_http_port }}
+      Initial admin password: docker exec nexus cat /nexus-data/admin.password
