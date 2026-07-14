@@ -3,7 +3,7 @@
 # setting the config file for the ansible
 set -e
 
-CFG_SRC="/workspace/project/ansible/ansible.cfg"
+CFG_SRC="/workspace/ansible/ansible.cfg"
 CFG_DST="/root/ansible.cfg"
 
 if [ -f "$CFG_SRC" ]; then
@@ -12,6 +12,6 @@ if [ -f "$CFG_SRC" ]; then
   export ANSIBLE_CONFIG="$CFG_DST"
 fi
 
-export ANSIBLE_INVENTORY="/workspace/project/ansible/inventories/aws_ec2.yml"
+export ANSIBLE_INVENTORY="/workspace/ansible/inventories/aws_ec2.yml"
 
 exec "$@"

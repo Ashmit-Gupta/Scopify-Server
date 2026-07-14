@@ -1,6 +1,6 @@
 # Default VPC Cluster — Terraform Commands
 
-Location: `project/terraform/`
+Location: `terraform/`
 
 Full flow with diagrams and examples: **`flow.md`**
 
@@ -11,7 +11,7 @@ Full flow with diagrams and examples: **`flow.md`**
 ### Local / WSL
 
 ```bash
-cd project/terraform
+cd terraform
 
 terraform init
 terraform plan
@@ -28,7 +28,7 @@ From repository root:
 docker run --rm -it \
   -v "$(pwd):/workspace" \
   -v "$HOME/.aws:/root/.aws:ro" \
-  -w /workspace/project/terraform \
+  -w /workspace/terraform \
   custom-ansible:latest \
   sh -c "terraform init && terraform apply"
 ```
@@ -58,7 +58,7 @@ Destroy removes **all Terraform-managed resources** in this stack: EC2 nodes, EB
 Always review what will be removed:
 
 ```bash
-cd project/terraform
+cd terraform
 terraform plan -destroy
 ```
 
@@ -82,7 +82,7 @@ terraform destroy -auto-approve
 docker run --rm -it \
   -v "$(pwd):/workspace" \
   -v "$HOME/.aws:/root/.aws:ro" \
-  -w /workspace/project/terraform \
+  -w /workspace/terraform \
   custom-ansible:latest \
   sh -c "terraform init && terraform destroy"
 ```
@@ -93,7 +93,7 @@ Auto-approve in Docker:
 docker run --rm \
   -v "$(pwd):/workspace" \
   -v "$HOME/.aws:/root/.aws:ro" \
-  -w /workspace/project/terraform \
+  -w /workspace/terraform \
   custom-ansible:latest \
   sh -c "terraform init && terraform destroy -auto-approve"
 ```
@@ -147,4 +147,4 @@ To rebuild: `terraform apply` again with the same `terraform.tfvars`.
 
 ## Next step after apply
 
-Configure Kubernetes with Ansible — see `project/ansible/cmds.md`.
+Configure Kubernetes with Ansible — see `ansible/cmds.md`.

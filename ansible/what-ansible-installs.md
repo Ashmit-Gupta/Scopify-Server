@@ -1,6 +1,6 @@
 # What Ansible installs — and how the Kubernetes cluster works
 
-Location: `project/ansible/`
+Location: `ansible/`
 
 This document explains **what** `ansible-playbook site.yml` installs on Master and workers, **why** each piece is needed, and **how** the pieces work together after Terraform has created the EC2 nodes.
 
@@ -40,7 +40,7 @@ Version pin (from `group_vars/all.yml`): **Kubernetes 1.28.1**, pod network CIDR
 `inventories/aws_ec2.yml` queries AWS for running instances tagged:
 
 - `Ansible=true`
-- `Project=gaming-board-cluster`
+- `Project=scopify-cluster`
 - `Role=master` → group `master`
 - `Role=worker-1` or `worker-2` → group `workers`
 

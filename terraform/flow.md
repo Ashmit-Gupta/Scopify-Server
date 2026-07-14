@@ -1,4 +1,4 @@
-# Terraform flow — `project/terraform`
+# Terraform flow — `terraform`
 
 End-to-end guide: how configuration becomes AWS resources, how to create, change, and destroy, with examples.
 
@@ -12,7 +12,7 @@ End-to-end guide: how configuration becomes AWS resources, how to create, change
 | Security groups | 1+ (default: `cluster`) | `modules/security-group` |
 | Default VPC / subnets | data sources only (not created) | — |
 
-After Terraform, Ansible (`project/ansible/`) configures Kubernetes on the nodes using EC2 tags for dynamic inventory.
+After Terraform, Ansible (`ansible/`) configures Kubernetes on the nodes using EC2 tags for dynamic inventory.
 
 ---
 
@@ -24,7 +24,7 @@ flowchart TB
     TFVARS[terraform.tfvars]
   end
 
-  subgraph root [Root module — project/terraform]
+  subgraph root [Root module — terraform]
     VARS[variables.tf]
     LOCALS[locals.tf]
     MAIN[main.tf]
@@ -43,7 +43,7 @@ flowchart TB
   end
 
   subgraph next [Next step]
-    ANS[project/ansible — K8s setup]
+    ANS[ansible — K8s setup]
   end
 
   TFVARS --> VARS
@@ -65,7 +65,7 @@ flowchart TB
 ## File roles
 
 ```
-project/terraform/
+terraform/
 ├── terraform.tfvars          ← YOUR values (region, nodes, ports, SGs)
 ├── variables.tf              ← declares what tfvars can set
 ├── locals.tf                 ← computed values (subnet spread, SG ID mapping)
@@ -89,12 +89,12 @@ Everything starts here. Root `main.tf` does not hard-code ports or instance name
 
 ```hcl
 aws_region   = "ap-south-1"
-project_name = "gaming-board-cluster"
+project_name = "scopify-cluster"
 key_pair_name = "terraform-key"
 
 security_groups = {
   cluster = {
-    name = "gaming-board-cluster-sg"
+    name = "scopify-cluster-sg"
     ingress_rules = [
       { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
       { description = "Kubernetes API", from_port = 6443, to_port = 6443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
@@ -159,7 +159,7 @@ dynamic "ingress" {
 ### Step 5 — Apply
 
 ```bash
-cd project/terraform
+cd terraform
 terraform init
 terraform plan      # preview changes
 terraform apply     # create / update resources
@@ -172,16 +172,16 @@ terraform output cluster_summary
 terraform output nodes
 ```
 
-Ansible dynamic inventory (`project/ansible/inventories/aws_ec2.yml`) finds instances by tags:
+Ansible dynamic inventory (`ansible/inventories/aws_ec2.yml`) finds instances by tags:
 
 - `tag:Ansible=true`
-- `tag:Project=gaming-board-cluster`
+- `tag:Project=scopify-cluster`
 - `tag:Role=master|worker-1|worker-2`
 
 Then run K8s setup:
 
 ```bash
-cd project/ansible
+cd ansible
 ansible-playbook site.yml
 ```
 
@@ -196,7 +196,7 @@ One SG with all K8s ports, three nodes all using it.
 ```hcl
 security_groups = {
   cluster = {
-    name = "gaming-board-cluster-sg"
+    name = "scopify-cluster-sg"
     ingress_rules = [ /* SSH, 80, 443, 6443, 30000-32767, ... */ ]
   }
 }
@@ -322,7 +322,7 @@ You do not need to destroy manually in reverse order.
 ### Option 1 — Destroy everything (recommended for teardown)
 
 ```bash
-cd project/terraform
+cd terraform
 
 terraform plan -destroy    # preview what will be removed
 terraform destroy          # prompts for confirmation
@@ -354,7 +354,7 @@ From repo root with AWS creds mounted:
 docker run --rm -it \
   -v "$(pwd):/workspace" \
   -v "$HOME/.aws:/root/.aws:ro" \
-  -w /workspace/project/terraform \
+  -w /workspace/terraform \
   custom-ansible:latest \
   sh -c "terraform init && terraform destroy"
 ```
@@ -439,7 +439,7 @@ See **`cmds.md`** for Docker/WSL one-liners.
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | SG destroy fails | EC2 still attached | Destroy instances first or use full `terraform destroy` |
-| Plan wants to recreate SG | SG `name` changed in tfvars | Set `name = "gaming-board-cluster-sg"` to match existing |
+| Plan wants to recreate SG | SG `name` changed in tfvars | Set `name = "scopify-cluster-sg"` to match existing |
 | Ansible finds no hosts | Instances destroyed or tags wrong | `terraform output nodes`; check `Ansible=true` tag |
 | State out of sync | Manual deletion in AWS console | `terraform refresh` or import/remove from state |
 
@@ -452,4 +452,4 @@ See **`cmds.md`** for Docker/WSL one-liners.
 | `cmds.md` | Copy-paste commands for init / apply / destroy |
 | `modules.md` | Module layout and port-customization patterns |
 | `terraform.tfvars.example` | Annotated variable examples |
-| `project/ansible/cmds.md` | Ansible + Docker workflow after Terraform |
+| `ansible/cmds.md` | Ansible + Docker workflow after Terraform |

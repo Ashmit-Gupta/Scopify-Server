@@ -1,105 +1,74 @@
-# Terraform modules — `project/terraform`
-
-## Layout
+# Terraform modules — Scopify Server
 
 ```
-project/terraform/
-├── main.tf                 # data sources + module calls
-├── variables.tf            # root variables (security_groups, instances, …)
+terraform/
+├── main.tf                 # wires modules + optional nginx EIP
 ├── locals.tf
+├── variables.tf
 ├── outputs.tf
-├── providers.tf
-├── terraform.tfvars
-└── modules/
-    ├── security-group/     # reusable SG with dynamic ingress/egress rules
-    └── ec2/                # single EC2 instance
+├── modules/
+│   ├── vpc/                # VPC, subnets, IGW, NAT, route tables
+│   ├── vpc-endpoints/      # optional Gateway + Interface endpoints
+│   ├── security-group/     # one SG per map key (CIDR or SG sources)
+│   └── ec2/                # one EC2 per map key
+└── terraform.tfvars.example
 ```
 
-## How port customization works
+## Module roles
 
-Each security group is a separate module call. Ports are not hard-coded in the module — you pass an `ingress_rules` list per SG key in `terraform.tfvars`.
+| Module | Creates | Required for frozen arch? |
+|--------|---------|---------------------------|
+| `vpc` | VPC, public/private subnets, IGW, route tables, optional NAT+EIP | **Yes** (when leaving default VPC) |
+| `security-group` | Security groups + rules | **Yes** |
+| `ec2` | EC2 instances (+ optional IAM profile / user_data) | **Yes** |
+| `iam-ssm` | Instance profile for Session Manager | **Yes** if private + no bastion |
+| `vpc-endpoints` | S3 gateway (+ optional Interface SSM/ECR/…) | **No** if NAT is on; **Yes** for SSM if NAT is off |
 
-### Pattern 1 — Different ports per SG
+## Access without bastion
+
+See **[`AWS_ACCESS.md`](./AWS_ACCESS.md)** and **[`AWS_GAPS.md`](./AWS_GAPS.md)**.
+
+Summary: private EC2s + **NAT** + **SSM IAM** + **SSM agent** = connect with Session Manager; VPC endpoints optional.
+
+## VPC endpoints — required or not?
+
+**Not required** for this project if:
+
+- Private instances use a **NAT Gateway** for outbound (Docker Hub, GHCR, apt, Helm), or  
+- You stay on Track A (default VPC / hybrid) for now.
+
+**Useful later** when you want:
+
+| Endpoint type | Examples | Cost | Why |
+|---------------|----------|------|-----|
+| Gateway | `s3` | No hourly fee | Pulls from S3 without NAT data charges |
+| Interface | `ecr.api`, `ecr.dkr`, `ssm`, `ec2`, `logs` | Hourly + data | Private AWS API access; SSM without bastion |
+
+Docker Hub / GHCR / Squarespace / Let's Encrypt **do not** go through VPC endpoints — NAT (or public IP) is still needed for those.
+
+Defaults in root variables:
+
+- `enable_vpc_endpoints = false`
+- Gateway S3 ready when you turn endpoints on
+- Interface endpoints off until you explicitly need them
+
+## Feature flags
 
 ```hcl
-security_groups = {
-  cluster = {
-    name = "gaming-board-cluster-sg"   # optional — keeps existing SG name on migration
-    ingress_rules = [
-      { from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-      { from_port = 6443, to_port = 6443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-    ]
-  }
-
-  admin = {
-    ingress_rules = [
-      { description = "SSH only", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["203.0.113.10/32"] },
-    ]
-  }
-
-  app = {
-    ingress_rules = [
-      { from_port = 8080, to_port = 8080, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-    ]
-  }
-}
+use_custom_vpc       = false  # keep current lab on default VPC
+enable_nat_gateway   = true   # only applies when use_custom_vpc = true
+enable_vpc_endpoints = false  # only applies when use_custom_vpc = true
 ```
 
-### Pattern 2 — Attach multiple SGs to one EC2
-
-AWS combines rules from all attached SGs (union). Attach only what each node needs:
+When `use_custom_vpc = true`, set per-instance:
 
 ```hcl
-instances = {
-  master = {
-    name                = "Master"
-    security_group_keys = ["cluster", "admin"]
-  }
-  worker-1 = {
-    name                = "worker-1"
-    security_group_keys = ["cluster"]
-  }
-}
+subnet_tier = "public"   # Nginx
+subnet_tier = "private"  # Jenkins, K8s nodes (default if omitted)
 ```
 
-### Pattern 3 — Per-instance overrides
+If an instance key `nginx` exists, root `main.tf` allocates and associates an **Elastic IP** automatically.
 
-```hcl
-worker-2 = {
-  name                = "worker-2"
-  security_group_keys = ["cluster"]
-  instance_type       = "t3.large"
-  root_volume_size    = 50
-}
-```
+## Safe migration note
 
-### Rule object fields
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `from_port` | yes | Start port |
-| `to_port` | yes | End port |
-| `protocol` | yes | `tcp`, `udp`, `-1`, etc. |
-| `description` | no | Rule label in AWS console |
-| `cidr_blocks` | no | e.g. `["0.0.0.0/0"]` |
-| `source_security_group_ids` | no | Allow traffic from another SG |
-| `self` | no | Allow traffic from same SG |
-
-### Egress
-
-Omit `egress_rules` to default to allow-all outbound. Override per SG:
-
-```hcl
-monitoring = {
-  ingress_rules = [ ... ]
-  egress_rules = [
-    { from_port = 443, to_port = 443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-  ]
-}
-```
-
-## Migration note
-
-If you previously used flat resources (`aws_security_group.cluster`, `aws_instance.nodes`) and refactor to modules, Terraform `moved` blocks can rename state entries without destroying/recreating AWS resources. That is a **one-time** step — delete `moved.tf` after a successful apply.
-
-Your state is currently empty, so no `moved` blocks are needed. Run `terraform init && terraform apply` normally.
+Flipping `use_custom_vpc` from `false` → `true` with existing instances in state will try to **move/replace** networking and likely recreate EC2s. Treat custom VPC as a planned migration (or destroy lab first), not a silent toggle on production-like state.

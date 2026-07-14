@@ -1,33 +1,32 @@
-# Jenkins, SonarQube & Nexus - 3 separate VMs
+# Jenkins, SonarQube & Nexus — private EC2s (custom VPC)
 
-## Layout
+## Layout (matches terraform.tfvars)
 
-| Instance | Type | Ports | Image |
-|----------|------|-------|--------|
-| Master, worker-1, worker-2 | `c7i-flex.large` | K8s cluster SG | (kubeadm via `site.yml`) |
-| **Jenkins** | `c7i-flex.large` | **8080**, **50000** | `jenkins/jenkins:latest` |
-| **Sonar** | `c7i-flex.large` | **9000** | `sonarqube:community` |
-| **Nexus** | `c7i-flex.large` | **8081** | `sonatype/nexus3:latest` |
+| Instance | Subnet | Ports (VPC-internal) | Image / role |
+|----------|--------|----------------------|--------------|
+| **Nginx** | public + EIP | 80/443 | Ansible `site-nginx.yml` |
+| Master, worker-1, worker-2 | private | K8s | `site.yml` |
+| **Jenkins** | private | **8080**, **50000** | `jenkins/jenkins:latest` |
+| **Sonar** | private | **9000** | `sonarqube:community` |
+| **Nexus** | private | **8081** | `sonatype/nexus3:latest` |
 
-Total: **6x `c7i-flex.large`** (Free Tier eligible on accounts that show that badge for this type).
-
-SG descriptions use ASCII only (`-`, not `—`).
-
----
+Public URLs go through Nginx hostnames (`jenkins.ashmit.xyz`, etc.), not raw private IPs.
 
 ## Apply
 
 ```bash
-cd project/terraform
+cd terraform
 terraform apply
-terraform output tools_urls
+terraform output nginx_eip
+terraform output ssm_connect_hint
 ```
 
 ## Ansible
 
 ```bash
-ansible-playbook site.yml          # K8s
-ansible-playbook site-tools.yml    # Jenkins + Sonar + Nexus
+ansible-playbook site.yml          # K8s (private)
+ansible-playbook site-tools.yml    # Jenkins + Sonar + Nexus (private)
+ansible-playbook site-nginx.yml    # Edge → private backends
 ```
 
 Or per tool:
@@ -38,12 +37,14 @@ ansible-playbook site-tools.yml --limit sonar
 ansible-playbook site-tools.yml --limit nexus
 ```
 
-## URLs
+## URLs (after DNS → Nginx EIP)
 
 ```text
-http://<jenkins-ip>:8080
-http://<sonar-ip>:9000
-http://<nexus-ip>:8081
+http://jenkins.ashmit.xyz
+http://sonar.ashmit.xyz
+http://nexus.ashmit.xyz
 ```
 
-Stop or `terraform destroy` when not practicing so Free Tier hours last.
+Until DNS: `curl -H "Host: jenkins.ashmit.xyz" http://<nginx_eip>/`
+
+Stop or `terraform destroy` when idle to control cost.

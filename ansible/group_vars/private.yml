@@ -1,0 +1,18 @@
+# group_vars/private.yml — hosts with no public IP (custom VPC private subnet)
+#
+# Auto ProxyJump through Nginx when the nginx group is present in inventory.
+# Override with env ANSIBLE_SSH_COMMON_ARGS if needed.
+# SSM alternative: see comments at bottom + cmds.md
+
+ansible_ssh_common_args: >-
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  {% if groups['nginx'] is defined and (groups['nginx'] | length > 0) %}
+  -o ProxyJump=ubuntu@{{ hostvars[groups['nginx'][0]].ansible_host }}
+  {% endif %}
+
+# ─── Optional: Ansible over AWS SSM (instead of ProxyJump) ───────────────────
+# ansible_connection: aws_ssm
+# ansible_aws_ssm_region: "{{ aws_region }}"
+# ansible_aws_ssm_bucket_name: "scopify-ansible-ssm-CHANGEME"
+# ansible_aws_ssm_timeout: 60

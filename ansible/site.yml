@@ -1,9 +1,11 @@
-# project/ansible/site.yml
-# K8s 1.28.1 cluster setup via kubeadm
+# ansible/site.yml
+# K8s 1.28.1 cluster setup via kubeadm — PRIVATE subnet nodes (custom VPC)
 #
-# Play 1: all nodes  → common role (steps 1–6)
-# Play 2: master     → master role (steps 7–10)
-# Play 3: workers    → workers role (join cluster)
+# Play 1: all K8s nodes → common role
+# Play 2: master       → master role
+# Play 3: workers      → workers role
+#
+# Access: ProxyJump via Nginx or SSM (see cmds.md)
 
 ---
 - name: Prepare all Kubernetes nodes

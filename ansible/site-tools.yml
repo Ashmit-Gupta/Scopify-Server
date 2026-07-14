@@ -1,10 +1,14 @@
-# project/ansible/site-tools.yml
-# CI/CD tool VMs: Jenkins, SonarQube, Nexus (separate EC2 each)
+# ansible/site-tools.yml
+# CI/CD tool VMs on PRIVATE subnet (custom VPC): Jenkins, SonarQube, Nexus
 #
-# Ports:
-#   Jenkins  -> 8080 (UI), 50000 (agents)
-#   SonarQube -> 9000 (UI)
-#   Nexus    -> 8081 (UI)
+# Reach via ProxyJump (Nginx) or SSM — see cmds.md / group_vars/private.yml
+# Ports (VPC-internal; Nginx proxies public hostnames later):
+#   Jenkins  -> 8080, 50000
+#   SonarQube -> 9000
+#   Nexus    -> 8081
+#
+# Run AFTER site.yml if you only care about tools; BEFORE site-nginx.yml
+# so upstreams are listening when the edge proxy is configured.
 
 ---
 - name: Prepare CI/CD tool VMs (packages + Docker)

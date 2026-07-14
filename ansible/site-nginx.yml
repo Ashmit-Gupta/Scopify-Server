@@ -1,0 +1,28 @@
+# ansible/site-nginx.yml
+# Edge EC2 (public subnet): install Docker, run Nginx as a container
+# Proxies Host headers → private Jenkins / Sonar / Nexus
+#
+# Container: --restart unless-stopped (survives reboot when Docker starts)
+# Config: /opt/scopify-nginx/conf.d → mounted into container
+#
+# Prerequisites: terraform apply; inventory has @nginx @jenkins @sonar @nexus
+# TLS: Let's Encrypt (certbot webroot) when nginx_enable_https=true
+#      DNS A records for jenkins/sonar/nexus must already point at Nginx EIP
+
+---
+- name: Prepare Nginx edge host (packages + Docker)
+  hosts: nginx
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - packages
+    - docker
+
+- name: Run Nginx reverse proxy container
+  hosts: nginx
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - nginx

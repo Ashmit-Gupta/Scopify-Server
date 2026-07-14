@@ -1,7 +1,18 @@
-# group_vars/all.yml — every K8s node (master + workers)
+# group_vars/all.yml — shared by all Scopify Server hosts
 
 ansible_user: ubuntu
 ansible_python_interpreter: auto_silent
+
+# ─── Align with terraform.tfvars ──────────────────────────────────────────────
+project_name: "scopify-cluster"
+aws_region: "ap-south-1"
+vpc_cidr: "10.20.0.0/16"
+
+# Domain / edge (Squarespace → Nginx EIP)
+edge_domain: "ashmit.xyz"
+jenkins_hostname: "jenkins.ashmit.xyz"
+sonar_hostname: "sonar.ashmit.xyz"
+nexus_hostname: "nexus.ashmit.xyz"
 
 # Kubernetes version (kubeadm / kubelet / kubectl package pin)
 kubernetes_version: "1.28.1"

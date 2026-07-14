@@ -1,18 +1,64 @@
 # ─── Network ─────────────────────────────────────────────────────────────────
 
 output "vpc_id" {
-  description = "Default VPC ID"
-  value       = data.aws_vpc.default.id
+  description = "Active VPC ID (custom or default)"
+  value       = local.vpc_id
 }
 
 output "vpc_cidr" {
-  description = "Default VPC CIDR block"
-  value       = data.aws_vpc.default.cidr_block
+  description = "Active VPC CIDR block"
+  value       = var.use_custom_vpc ? module.vpc[0].vpc_cidr : data.aws_vpc.default[0].cidr_block
+}
+
+output "use_custom_vpc" {
+  description = "Whether custom VPC module is active"
+  value       = var.use_custom_vpc
 }
 
 output "public_subnet_ids" {
-  description = "Subnet IDs used in the default VPC"
-  value       = data.aws_subnets.default.ids
+  description = "Public subnet IDs (custom VPC) or default VPC subnets"
+  value       = local.public_subnet_ids
+}
+
+output "private_subnet_ids" {
+  description = "Private subnet IDs when custom VPC enabled; else same as public/default"
+  value       = local.private_subnet_ids
+}
+
+output "nat_gateway_id" {
+  description = "NAT Gateway ID (custom VPC only)"
+  value       = try(module.vpc[0].nat_gateway_id, null)
+}
+
+output "nat_eip" {
+  description = "NAT Elastic IP (custom VPC only)"
+  value       = try(module.vpc[0].nat_eip, null)
+}
+
+output "nginx_eip" {
+  description = "Elastic IP for Nginx edge (when nginx instance exists)"
+  value       = try(aws_eip.nginx[0].public_ip, null)
+}
+
+output "vpc_endpoint_ids" {
+  description = "VPC endpoint IDs when endpoints module is enabled"
+  value = local.create_vpc_endpoints && var.use_custom_vpc ? {
+    gateway   = try(module.vpc_endpoints[0].gateway_endpoint_ids, {})
+    interface = try(module.vpc_endpoints[0].interface_endpoint_ids, {})
+  } : null
+}
+
+output "ssm_instance_profile" {
+  description = "IAM instance profile name used for SSM (null if enable_ssm = false)"
+  value       = try(module.iam_ssm[0].instance_profile_name, null)
+}
+
+output "ssm_connect_hint" {
+  description = "Example Session Manager commands per instance"
+  value = var.enable_ssm ? {
+    for k, v in module.nodes :
+    k => "aws ssm start-session --target ${v.instance_id} --region ${var.aws_region}"
+  } : null
 }
 
 output "security_group_ids" {
@@ -153,9 +199,11 @@ output "cluster_summary" {
       "  Instance type:   ${var.instance_type}",
       "  Key pair:        ${var.key_pair_name}",
       "──────────────────────────────────────────────────────────────────",
-      "  VPC ID:          ${data.aws_vpc.default.id}",
-      "  VPC CIDR:        ${data.aws_vpc.default.cidr_block}",
-      "  Subnets:         ${join(", ", data.aws_subnets.default.ids)}",
+      "  VPC mode:        ${var.use_custom_vpc ? "custom" : "default"}",
+      "  VPC ID:          ${local.vpc_id}",
+      "  Public subnets:  ${join(", ", local.public_subnet_ids)}",
+      "  Private subnets: ${join(", ", local.private_subnet_ids)}",
+      "  Nginx EIP:       ${try(aws_eip.nginx[0].public_ip, "n/a")}",
       "  Security groups: ${join(", ", [for k, v in module.security_groups : "${k}=${v.security_group_id}"])}",
       "──────────────────────────────────────────────────────────────────",
       "  NODES",

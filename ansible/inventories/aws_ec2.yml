@@ -4,18 +4,23 @@ plugin: amazon.aws.aws_ec2
 regions:
   - ap-south-1
 
-# Matches project/terraform/terraform.tfvars → project_name
+# Matches terraform/terraform.tfvars → project_name = "scopify-cluster"
 filters:
   tag:Ansible: "true"
-  tag:Project: gaming-board-cluster
+  tag:Project: scopify-cluster
   instance-state-name: running
 
 hostnames:
   - tag:Name
   - instance-id
 
+# Custom VPC: most nodes have no public IP → private_ip.
+# Nginx (public) has public_ip → prefer that so edge is reachable via SSH from laptop.
 compose:
-  ansible_host: public_ip_address
+  ansible_host: public_ip_address | default(private_ip_address, true)
+  private_ip: private_ip_address
+  public_ip: public_ip_address | default("")
+  instance_id: instance_id
 
 groups:
   master: "ec2_tags.Role == 'master'"
@@ -23,10 +28,17 @@ groups:
   jenkins: "ec2_tags.Role == 'jenkins'"
   sonar: "ec2_tags.Role == 'sonar'"
   nexus: "ec2_tags.Role == 'nexus'"
+  nginx: "ec2_tags.Role == 'nginx'"
   tools: "ec2_tags.Role == 'jenkins' or ec2_tags.Role == 'sonar' or ec2_tags.Role == 'nexus'"
+  # Edge = public subnet; private = everything else (SSM / jump-host for Ansible)
+  edge: "ec2_tags.Role == 'nginx'"
+  private: "ec2_tags.Role != 'nginx'"
+  k8s: "ec2_tags.Role == 'master' or ec2_tags.Role == 'worker-1' or ec2_tags.Role == 'worker-2'"
 
 keyed_groups:
   - key: ec2_tags.Project
     prefix: project
+  - key: ec2_tags.Role
+    prefix: role
 
 strict: true

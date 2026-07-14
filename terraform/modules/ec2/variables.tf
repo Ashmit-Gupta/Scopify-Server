@@ -34,6 +34,24 @@ variable "associate_public_ip_address" {
   default     = true
 }
 
+variable "iam_instance_profile" {
+  type        = string
+  description = "IAM instance profile name for SSM (and other AWS APIs)"
+  default     = null
+}
+
+variable "user_data_base64" {
+  type        = string
+  description = "Optional cloud-init / user data (base64)"
+  default     = null
+}
+
+variable "user_data_replace_on_change" {
+  type        = bool
+  description = "Recreate instance when user_data changes"
+  default     = false
+}
+
 variable "root_volume_size" {
   type        = number
   description = "Root EBS volume size in GB"

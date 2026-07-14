@@ -1,0 +1,10 @@
+---
+- name: Reload nginx container
+  ansible.builtin.command: docker exec {{ nginx_container_name }} nginx -s reload
+  register: nginx_reload
+  failed_when: false
+  changed_when: nginx_reload.rc == 0
+
+- name: Restart nginx container if reload failed
+  ansible.builtin.command: docker restart {{ nginx_container_name }}
+  when: nginx_reload.rc is defined and nginx_reload.rc != 0

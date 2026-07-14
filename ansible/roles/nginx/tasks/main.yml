@@ -1,0 +1,225 @@
+---
+# roles/nginx — run Nginx as a Docker container (edge reverse proxy)
+# Prerequisites: docker role (see site-nginx.yml)
+# --restart unless-stopped → starts again on reboot when Docker starts
+# HTTPS: certbot webroot → mount /etc/letsencrypt into the container
+
+- name: Stop and disable host nginx if present (we use Docker instead)
+  ansible.builtin.systemd:
+    name: nginx
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove host nginx package if installed
+  ansible.builtin.apt:
+    name: nginx
+    state: absent
+  failed_when: false
+
+- name: Create Nginx host directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ nginx_config_dir }}"
+    - "{{ nginx_certbot_webroot }}/.well-known/acme-challenge"
+    - "{{ nginx_letsencrypt_dir }}"
+
+- name: Resolve backend private IPs from inventory
+  ansible.builtin.set_fact:
+    jenkins_upstream: "{{ hostvars[groups['jenkins'][0]].private_ip | default(hostvars[groups['jenkins'][0]].ansible_host) }}"
+    sonar_upstream: "{{ hostvars[groups['sonar'][0]].private_ip | default(hostvars[groups['sonar'][0]].ansible_host) }}"
+    nexus_upstream: "{{ hostvars[groups['nexus'][0]].private_ip | default(hostvars[groups['nexus'][0]].ansible_host) }}"
+  when:
+    - groups['jenkins'] | default([]) | length > 0
+    - groups['sonar'] | default([]) | length > 0
+    - groups['nexus'] | default([]) | length > 0
+
+- name: Fail if tool backends are missing from inventory
+  ansible.builtin.fail:
+    msg: >-
+      Need jenkins, sonar, and nexus hosts in inventory (Terraform Role tags).
+      Run terraform apply and wait until instances are running + tagged.
+  when: >
+    (groups['jenkins'] | default([]) | length == 0) or
+    (groups['sonar'] | default([]) | length == 0) or
+    (groups['nexus'] | default([]) | length == 0)
+
+- name: Check whether Let's Encrypt certificate already exists
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ nginx_ssl_primary_hostname }}/fullchain.pem"
+  register: nginx_cert_stat
+
+- name: Set TLS ready flag (existing certs)
+  ansible.builtin.set_fact:
+    nginx_tls_ready: "{{ nginx_enable_https | bool and nginx_cert_stat.stat.exists }}"
+
+- name: Deploy edge reverse-proxy config (mounted into container)
+  ansible.builtin.template:
+    src: default.conf.j2
+    dest: "{{ nginx_config_dir }}/default.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx container
+
+- name: Check if Nginx container exists
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
+- name: Inspect existing Nginx container mounts
+  ansible.builtin.command: >
+    docker inspect {{ nginx_container_name }}
+    --format {% raw %}{{json .HostConfig.Binds}}{% endraw %}
+  register: nginx_binds
+  when: "nginx_container_name in docker_names.stdout_lines"
+  changed_when: false
+  failed_when: false
+
+- name: Decide whether Nginx container must be recreated (SSL volume mounts)
+  ansible.builtin.set_fact:
+    nginx_needs_recreate: >-
+      {{
+        (nginx_container_name not in docker_names.stdout_lines)
+        or
+        (nginx_binds.stdout is not defined)
+        or
+        (nginx_letsencrypt_dir not in (nginx_binds.stdout | default('')))
+        or
+        (nginx_certbot_webroot not in (nginx_binds.stdout | default('')))
+      }}
+
+- name: Stop and remove outdated Nginx container
+  ansible.builtin.command: docker rm -f {{ nginx_container_name }}
+  when:
+    - nginx_container_name in docker_names.stdout_lines
+    - nginx_needs_recreate | bool
+  changed_when: true
+
+- name: Refresh container name list after remove
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
+- name: Start existing Nginx container
+  ansible.builtin.command: docker start {{ nginx_container_name }}
+  when:
+    - nginx_container_name in docker_names.stdout_lines
+    - not (nginx_needs_recreate | bool)
+  register: nginx_start
+  changed_when: nginx_start.rc == 0
+  failed_when: false
+
+- name: Ensure Nginx restarts when Docker / VM boots
+  ansible.builtin.command: docker update --restart unless-stopped {{ nginx_container_name }}
+  when:
+    - nginx_container_name in docker_names.stdout_lines
+    - not (nginx_needs_recreate | bool)
+  changed_when: true
+
+- name: Run Nginx container (HTTP + HTTPS + ACME webroot + certs)
+  ansible.builtin.command: >
+    docker run -d
+    --name {{ nginx_container_name }}
+    --restart unless-stopped
+    --memory {{ nginx_memory }}
+    -p {{ nginx_http_port }}:80
+    -p {{ nginx_https_port }}:443
+    -v {{ nginx_config_dir }}:/etc/nginx/conf.d:ro
+    -v {{ nginx_certbot_webroot }}:/var/www/certbot:ro
+    -v {{ nginx_letsencrypt_dir }}:/etc/letsencrypt:ro
+    {{ nginx_image }}
+  when: "nginx_container_name not in docker_names.stdout_lines"
+
+- name: Wait for Nginx HTTP port
+  ansible.builtin.wait_for:
+    port: "{{ nginx_http_port }}"
+    host: 127.0.0.1
+    delay: 3
+    timeout: 60
+
+- name: Install certbot for Let's Encrypt
+  ansible.builtin.apt:
+    name: certbot
+    state: present
+    update_cache: true
+  when: nginx_enable_https | bool
+
+- name: Obtain Let's Encrypt certificate (webroot)
+  ansible.builtin.command: >
+    certbot certonly --webroot
+    -w {{ nginx_certbot_webroot }}
+    {% for h in nginx_ssl_hostnames %}-d {{ h }} {% endfor %}
+    --email {{ nginx_ssl_email }}
+    --agree-tos
+    --non-interactive
+    --keep-until-expiring
+  register: certbot_issue
+  when:
+    - nginx_enable_https | bool
+    - not (nginx_tls_ready | bool)
+  changed_when: "'Congratulations' in certbot_issue.stdout or 'Successfully received' in certbot_issue.stdout"
+
+- name: Re-check certificate after certbot
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ nginx_ssl_primary_hostname }}/fullchain.pem"
+  register: nginx_cert_stat_after
+  when: nginx_enable_https | bool
+
+- name: Enable HTTPS server blocks once certificate exists
+  ansible.builtin.set_fact:
+    nginx_tls_ready: true
+  when:
+    - nginx_enable_https | bool
+    - nginx_cert_stat_after is defined
+    - nginx_cert_stat_after.stat.exists
+
+- name: Deploy HTTPS-enabled reverse-proxy config
+  ansible.builtin.template:
+    src: default.conf.j2
+    dest: "{{ nginx_config_dir }}/default.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  when: nginx_tls_ready | bool
+  notify: Reload nginx container
+
+- name: Install certbot renew timer hook (reload nginx after renew)
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-scopify-nginx.sh
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      docker exec {{ nginx_container_name }} nginx -s reload || docker restart {{ nginx_container_name }}
+  when: nginx_enable_https | bool
+
+- name: Ensure handlers run before final validation
+  ansible.builtin.meta: flush_handlers
+
+- name: Validate nginx config inside container
+  ansible.builtin.command: docker exec {{ nginx_container_name }} nginx -t
+  changed_when: false
+
+- name: Confirm Nginx container is running
+  ansible.builtin.command: docker ps --filter name={{ nginx_container_name }} --format {% raw %}{{.Status}}{% endraw %}
+  register: nginx_status
+  changed_when: false
+
+- name: Show edge endpoints
+  ansible.builtin.debug:
+    msg: >-
+      Nginx Docker container '{{ nginx_container_name }}' ({{ nginx_status.stdout }})
+      image={{ nginx_image }} restart=unless-stopped
+      HTTPS={{ 'enabled' if (nginx_tls_ready | bool) else 'pending (HTTP only until certbot succeeds)' }}.
+      URLs:
+      https://{{ jenkins_hostname }},
+      https://{{ sonar_hostname }},
+      https://{{ nexus_hostname }}.
+      Upstreams: jenkins={{ jenkins_upstream }}:{{ jenkins_backend_port }},
+      sonar={{ sonar_upstream }}:{{ sonar_backend_port }},
+      nexus={{ nexus_upstream }}:{{ nexus_backend_port }}

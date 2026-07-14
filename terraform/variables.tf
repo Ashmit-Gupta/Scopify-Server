@@ -88,7 +88,8 @@ variable "instances" {
     instance_type       = optional(string)
     root_volume_size    = optional(number)
     root_volume_type    = optional(string)
-    associate_public_ip = optional(bool, true)
+    associate_public_ip = optional(bool)
+    subnet_tier         = optional(string) # "public" | "private" — used when use_custom_vpc = true
   }))
   description = "Map of EC2 instances — security_group_keys references keys in var.security_groups"
 }
@@ -97,4 +98,88 @@ variable "owner" {
   type        = string
   description = "Owner tag value"
   default     = "Ashmit"
+}
+
+# ─── Custom VPC (frozen architecture) ─────────────────────────────────────────
+
+variable "use_custom_vpc" {
+  type        = bool
+  description = "If true, create modules/vpc instead of using the account default VPC. Keep false until ready to migrate the lab."
+  default     = false
+}
+
+variable "vpc_cidr" {
+  type        = string
+  description = "CIDR for custom VPC"
+  default     = "10.20.0.0/16"
+}
+
+variable "vpc_az_count" {
+  type        = number
+  description = "AZ count for public+private subnet pairs"
+  default     = 2
+}
+
+variable "vpc_availability_zones" {
+  type        = list(string)
+  description = "Optional explicit AZs; empty = auto"
+  default     = []
+}
+
+variable "enable_nat_gateway" {
+  type        = bool
+  description = "NAT Gateway for private subnet outbound (costly; needed for true private tier)"
+  default     = true
+}
+
+variable "enable_vpc_endpoints" {
+  type        = bool
+  description = "Create VPC endpoints module. Optional if NAT is on. Required for SSM only if you disable NAT."
+  default     = false
+}
+
+variable "enable_ssm" {
+  type        = bool
+  description = "Attach IAM instance profile for AWS Systems Manager Session Manager (recommended with private subnets)"
+  default     = true
+}
+
+variable "install_ssm_agent" {
+  type        = bool
+  description = "Inject Ubuntu cloud-init to install amazon-ssm-agent via snap (set false if AMI already has agent)"
+  default     = true
+}
+
+variable "enable_ssm_vpc_endpoints" {
+  type        = bool
+  description = <<-EOT
+    Create Interface VPC endpoints required for SSM without using the public AWS network:
+    ssm, ssmmessages, ec2messages.
+    With NAT only, leave this false. With no NAT, set this true or SSM will not work.
+  EOT
+  default     = false
+}
+
+variable "vpc_endpoint_gateway_enabled" {
+  type        = bool
+  description = "Gateway endpoints (S3 etc.) — cheap, useful with private subnets"
+  default     = true
+}
+
+variable "vpc_endpoint_gateway_services" {
+  type        = set(string)
+  description = "Gateway endpoint services"
+  default     = ["s3"]
+}
+
+variable "vpc_endpoint_interface_enabled" {
+  type        = bool
+  description = "Interface endpoints (ECR/SSM/…) — hourly cost; leave false unless needed"
+  default     = false
+}
+
+variable "vpc_endpoint_interface_services" {
+  type        = list(string)
+  description = "Interface endpoint short names when interface endpoints enabled"
+  default     = ["ec2", "ecr.api", "ecr.dkr", "logs", "ssm", "ssmmessages", "ec2messages"]
 }

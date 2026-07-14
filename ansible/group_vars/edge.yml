@@ -1,0 +1,5 @@
+# group_vars/edge.yml — alias of nginx group (inventory group "edge")
+# Inherits nginx.yml patterns via same Role; keep thin.
+
+# Marker for playbooks that limit: edge
+edge_role: nginx

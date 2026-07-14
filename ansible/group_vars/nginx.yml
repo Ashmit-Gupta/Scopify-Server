@@ -1,0 +1,26 @@
+# Official nginx image — edge reverse proxy in Docker
+nginx_image: "nginx:1.27-alpine"
+nginx_container_name: "scopify-nginx"
+nginx_http_port: 80
+nginx_https_port: 443
+nginx_config_dir: /opt/scopify-nginx/conf.d
+nginx_memory: "256m"
+
+# TLS (Let's Encrypt via certbot webroot on the Nginx EC2)
+nginx_enable_https: true
+nginx_ssl_email: "ashmitg.dev@gmail.com"   # Let's Encrypt account / expiry notices
+nginx_letsencrypt_dir: /etc/letsencrypt
+nginx_certbot_webroot: /opt/scopify-nginx/certbot
+# Primary name becomes the live/ folder under Let's Encrypt
+nginx_ssl_primary_hostname: "{{ jenkins_hostname }}"
+nginx_ssl_cert_path: "/etc/letsencrypt/live/{{ nginx_ssl_primary_hostname }}/fullchain.pem"
+nginx_ssl_key_path: "/etc/letsencrypt/live/{{ nginx_ssl_primary_hostname }}/privkey.pem"
+nginx_ssl_hostnames:
+  - "{{ jenkins_hostname }}"
+  - "{{ sonar_hostname }}"
+  - "{{ nexus_hostname }}"
+
+# Backend ports (match terraform SGs + Docker publish ports on tool VMs)
+jenkins_backend_port: 8080
+sonar_backend_port: 9000
+nexus_backend_port: 8081

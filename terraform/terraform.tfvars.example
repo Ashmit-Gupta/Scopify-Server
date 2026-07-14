@@ -1,8 +1,12 @@
-# Copy to terraform.tfvars and adjust as needed.
-# 3 K8s + 3 tool VMs on c7i-flex.large
+# terraform/terraform.tfvars.example
+# Copy to terraform.tfvars and adjust.
+#
+# Modes:
+#   use_custom_vpc = false  → current lab (default VPC) — safe for existing EC2s
+#   use_custom_vpc = true   → modules/vpc (public/private + NAT) — migration / rebuild
 
 aws_region   = "ap-south-1"
-project_name = "gaming-board-cluster"
+project_name = "scopify-cluster"
 environment  = "dev"
 owner        = "Ashmit"
 
@@ -14,24 +18,37 @@ key_pair_name    = "terraform-key"
 
 allowed_ingress_cidr = "0.0.0.0/0"
 
+use_custom_vpc       = false
+vpc_cidr             = "10.20.0.0/16"
+vpc_az_count         = 2
+enable_nat_gateway   = true
+
+enable_ssm               = true
+install_ssm_agent        = true
+enable_ssm_vpc_endpoints = false # set true with custom VPC to add ssm/ssmmessages/ec2messages
+
+# General VPC endpoints (S3 gateway / ECR / …) — separate from SSM-only flag
+enable_vpc_endpoints            = false
+vpc_endpoint_gateway_enabled    = true
+vpc_endpoint_gateway_services   = ["s3"]
+vpc_endpoint_interface_enabled  = false
+vpc_endpoint_interface_services = ["ec2", "ecr.api", "ecr.dkr", "logs"]
+
 security_groups = {
   cluster = {
-    name        = "gaming-board-cluster-sg"
-    description = "Cluster nodes - SSH, web, SMTP, K8s API, NodePort ranges"
+    name        = "scopify-cluster-sg"
+    description = "Cluster nodes - SSH, web, K8s API, NodePort ranges"
     ingress_rules = [
       { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-      { description = "SMTP", from_port = 25, to_port = 25, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
       { description = "HTTP", from_port = 80, to_port = 80, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
       { description = "HTTPS", from_port = 443, to_port = 443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-      { description = "SMTPS", from_port = 465, to_port = 465, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
-      { description = "Custom TCP (app range)", from_port = 3000, to_port = 10000, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
       { description = "Kubernetes API server", from_port = 6443, to_port = 6443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
       { description = "Kubernetes NodePort range", from_port = 30000, to_port = 32767, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
     ]
   }
 
   jenkins = {
-    name        = "gaming-board-jenkins-sg"
+    name        = "scopify-jenkins-sg"
     description = "Jenkins - SSH, UI 8080, agent 50000"
     ingress_rules = [
       { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
@@ -41,7 +58,7 @@ security_groups = {
   }
 
   sonar = {
-    name        = "gaming-board-sonar-sg"
+    name        = "scopify-sonar-sg"
     description = "SonarQube - SSH, UI 9000"
     ingress_rules = [
       { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
@@ -50,13 +67,22 @@ security_groups = {
   }
 
   nexus = {
-    name        = "gaming-board-nexus-sg"
+    name        = "scopify-nexus-sg"
     description = "Nexus - SSH, UI 8081"
     ingress_rules = [
       { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
       { description = "Nexus UI", from_port = 8081, to_port = 8081, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
     ]
   }
+
+  # nginx = {
+  #   name = "scopify-nginx-sg"
+  #   ingress_rules = [
+  #     { description = "HTTP", from_port = 80, to_port = 80, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+  #     { description = "HTTPS", from_port = 443, to_port = 443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+  #     { description = "SSH", from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["YOUR.IP.ADDR.ESS/32"] },
+  #   ]
+  # }
 }
 
 instances = {
@@ -64,6 +90,7 @@ instances = {
     name                = "Master"
     security_group_keys = ["cluster"]
     instance_type       = "c7i-flex.large"
+    # subnet_tier       = "private"  # when use_custom_vpc = true
   }
   worker-1 = {
     name                = "worker-1"
@@ -93,4 +120,10 @@ instances = {
     instance_type       = "c7i-flex.large"
     root_volume_size    = 40
   }
+  # nginx = {
+  #   name                = "Nginx"
+  #   security_group_keys = ["nginx"]
+  #   subnet_tier         = "public"
+  #   associate_public_ip = true
+  # }
 }
