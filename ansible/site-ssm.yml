@@ -1,0 +1,35 @@
+# ansible/site-ssm.yml
+# 1) OS helpers on every host (sudoers + wrapper — backup only)
+# 2) AWS account/region Session Manager prefs → runAs ubuntu
+#    (THIS is what actually changes whoami — SSM ignores passwd shell / bashrc)
+#
+#   ansible-playbook site-ssm.yml
+#
+# Or from WSL without Ansible:
+#   bash "../scripts/configure-ssm-run-as-ubuntu.sh"
+
+---
+- name: Configure SSM sessions to land as ubuntu (OS helpers)
+  hosts: all
+  become: yes
+  gather_facts: no
+
+  roles:
+    - ssm_login
+
+- name: Set AWS Session Manager Run As → ubuntu (region prefs)
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Apply SSM-SessionManagerRunShell (runAsDefaultUser=ubuntu)
+      ansible.builtin.command: bash "{{ playbook_dir }}/../scripts/configure-ssm-run-as-ubuntu.sh"
+      environment:
+        AWS_REGION: "{{ aws_region | default('ap-south-1') }}"
+      register: ssm_prefs
+      changed_when: "'Done' in ssm_prefs.stdout or 'Updating' in ssm_prefs.stdout or 'Creating' in ssm_prefs.stdout"
+
+    - name: Show SSM preference result
+      ansible.builtin.debug:
+        msg: "{{ ssm_prefs.stdout_lines | default(ssm_prefs.stderr_lines) }}"

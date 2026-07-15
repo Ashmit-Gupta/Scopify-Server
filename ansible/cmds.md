@@ -65,8 +65,16 @@ ansible tools -m ping
 
 # Order matters
 ansible-playbook site.yml          # K8s
-ansible-playbook site-tools.yml    # Jenkins / Sonar / Nexus Docker
+ansible-playbook site-tools.yml    # Jenkins / Sonar / Nexus (+ Jenkins kubectl + master kubeconfig)
 ansible-playbook site-nginx.yml    # Edge reverse proxy → private backends
+ansible-playbook site-ssm.yml      # SSM sessions auto-switch ssm-user → ubuntu (all hosts)
+```
+
+Jenkins CD check after `site-tools.yml`:
+
+```bash
+# On Jenkins EC2 (or: docker exec from inventory)
+docker exec jenkins kubectl get nodes
 ```
 
 Manual ProxyJump override (if needed):
@@ -78,6 +86,24 @@ export ANSIBLE_SSH_COMMON_ARGS="-o ProxyJump=ubuntu@<NGINX_EIP>"
 ---
 
 ## SSM admin (no Ansible)
+
+Default Session Manager user is `ssm-user`. To land as `ubuntu` (for kubeconfig / pipelines):
+
+```bash
+# From WSL (where aws works) — one-time account/region setting:
+bash "/mnt/d/ashmit_personal_project/scopify/Scopify Server/scripts/configure-ssm-run-as-ubuntu.sh"
+
+# OR: ansible-playbook site-ssm.yml   # also updates AWS prefs from localhost
+
+# Then NEW session:
+aws ssm start-session --target i-xxxx --region ap-south-1
+whoami   # ubuntu
+
+# Immediate override without changing prefs:
+aws ssm start-session --target i-xxxx --region ap-south-1 \
+  --document-name AWS-StartInteractiveCommand \
+  --parameters command="sudo -iu ubuntu"
+```
 
 ```bash
 aws ssm start-session --target i-xxxx --region ap-south-1
@@ -96,8 +122,21 @@ Point Squarespace A records for:
 
 → Nginx Elastic IP (`terraform output nginx_eip`).
 
-`site-nginx.yml` issues Let's Encrypt certs (HTTPS) when DNS already points at the Nginx EIP.
-Set `nginx_ssl_email` in `group_vars/nginx.yml` before the first run.
+`site-nginx.yml` issues a **wildcard** Let's Encrypt cert for `ashmit.xyz` + `*.ashmit.xyz`
+via Cloudflare DNS-01 (covers jenkins/sonar/nexus/test-k8s/…).
+
+1. Create a Cloudflare API token (Zone → DNS → Edit for `ashmit.xyz`).
+2. Copy secrets file and set the token:
+   ```bash
+   cp group_vars/nginx_secrets.yml.example group_vars/nginx_secrets.yml
+   # edit: cloudflare_dns_api_token: "..."
+   ```
+3. Run:
+   ```bash
+   ansible-playbook site-nginx.yml
+   ```
+4. After success, set `nginx_ssl_force_wildcard: false` in `group_vars/nginx.yml`
+   so renewals use `--keep-until-expiring`.
 
 ---
 

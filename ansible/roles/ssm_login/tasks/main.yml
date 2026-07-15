@@ -1,0 +1,86 @@
+---
+# roles/ssm_login — OS-side helpers for Session Manager
+#
+# IMPORTANT: AWS Session Manager does NOT use ssm-user's /etc/passwd shell and
+# often does not source .bashrc. whoami stays "ssm-user" until you set regional
+# Session Manager preferences: runAsEnabled + runAsDefaultUser=ubuntu
+# (see scripts/configure-ssm-run-as-ubuntu.sh and site-ssm.yml localhost play).
+#
+# This role still installs sudoers + wrapper so shell-profile fallbacks work.
+
+- name: Ensure ubuntu user exists
+  ansible.builtin.user:
+    name: ubuntu
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Ensure ssm-user account exists (SSM agent; create early if missing)
+  ansible.builtin.user:
+    name: ssm-user
+    home: /home/ssm-user
+    create_home: true
+    state: present
+
+- name: Allow ssm-user passwordless switch to ubuntu
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/ssm-ubuntu-switch
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      # Managed by Ansible (roles/ssm_login)
+      ssm-user ALL=(ubuntu) NOPASSWD: ALL
+    validate: visudo -cf %s
+
+- name: Install ssm-user → ubuntu login shell wrapper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/ssm-ubuntu-shell
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible (roles/ssm_login)
+      # Used as ssm-user's login shell so AWS SSM sessions land as ubuntu.
+      # Stay as ssm-user: SSM_STAY=1 /bin/bash
+      if [ -n "${SSM_STAY:-}" ]; then
+        exec /bin/bash "$@"
+      fi
+      exec sudo -iu ubuntu
+
+- name: Set ssm-user login shell to ubuntu wrapper (works even when SSM skips bashrc)
+  ansible.builtin.user:
+    name: ssm-user
+    shell: /usr/local/bin/ssm-ubuntu-shell
+
+- name: Backup auto-switch in .bash_profile (interactive bash)
+  ansible.builtin.copy:
+    dest: /home/ssm-user/.bash_profile
+    owner: ssm-user
+    group: ssm-user
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/ssm_login)
+      if [ "$(id -un)" = "ssm-user" ] && [ -z "${SSM_STAY:-}" ]; then
+        exec sudo -iu ubuntu
+      fi
+
+- name: Backup auto-switch in .bashrc
+  ansible.builtin.copy:
+    dest: /home/ssm-user/.bashrc
+    owner: ssm-user
+    group: ssm-user
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/ssm_login)
+      if [ "$(id -un)" = "ssm-user" ] && [ -z "${SSM_STAY:-}" ]; then
+        exec sudo -iu ubuntu
+      fi
+
+- name: Confirm ssm→ubuntu login helper installed
+  ansible.builtin.debug:
+    msg: >-
+      ssm-user shell=/usr/local/bin/ssm-ubuntu-shell on {{ inventory_hostname }}.
+      Exit this SSM session and start a NEW one — old sessions stay as ssm-user.
+      whoami should print: ubuntu

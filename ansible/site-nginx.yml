@@ -18,6 +18,7 @@
   roles:
     - packages
     - docker
+    - ssm_login
 
 - name: Run Nginx reverse proxy container
   hosts: nginx

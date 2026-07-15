@@ -3,3 +3,7 @@
 
 kubeconfig_user: ubuntu
 kubeconfig_path: "/home/ubuntu/.kube/config"
+
+# Extra packages on the control plane (git pull + kubectl apply deploy manifests)
+master_extra_packages:
+  - git

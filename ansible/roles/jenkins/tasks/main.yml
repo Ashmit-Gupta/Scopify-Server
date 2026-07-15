@@ -1,6 +1,87 @@
 ---
-# roles/jenkins — run Jenkins container + make Trivy available to pipelines
+# roles/jenkins — Jenkins container + Trivy + kubectl/kubeconfig for cluster deploys
 # Ports: 8080 (UI), 50000 (agents)
+#
+# kubectl + kubeconfig + docker CLI:
+#   Host:  /usr/bin/kubectl + /opt/scopify-kube/config  (copied from Master admin.conf)
+#   Docker: /usr/bin/docker + /var/run/docker.sock (host engine; not DinD)
+#   Container: KUBECONFIG + --group-add docker GID so jenkins user can use the socket
+
+- name: Fail if Kubernetes master is missing from inventory
+  ansible.builtin.fail:
+    msg: >-
+      Need a master host in inventory to copy kubeconfig onto Jenkins.
+      Run after site.yml so the control plane exists, then re-run:
+      ansible-playbook site-tools.yml --limit jenkins
+  when: groups['master'] | default([]) | length == 0
+
+- name: Detect kubectl package version installed on Kubernetes master
+  ansible.builtin.command: dpkg-query -W -f='${Version}' kubectl
+  delegate_to: "{{ groups['master'][0] }}"
+  register: master_kubectl_pkg
+  changed_when: false
+
+- name: Set Jenkins kubectl pin (prefer master's installed version)
+  ansible.builtin.set_fact:
+    jenkins_kubectl_pkg_version: "{{ master_kubectl_pkg.stdout | default(kubectl_pkg_version) }}"
+    # 1.28.1-1.1 → v1.28  (match pkgs.k8s.io channel on the Master)
+    jenkins_k8s_apt_channel: "v{{ master_kubectl_pkg.stdout.split('.')[0] }}.{{ master_kubectl_pkg.stdout.split('.')[1] }}"
+
+- name: Ensure apt keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Add Kubernetes GPG key (for kubectl package)
+  ansible.builtin.shell: |
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ jenkins_k8s_apt_channel }}/deb/Release.key \
+      | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes apt repository matching Master minor
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: >-
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
+      https://pkgs.k8s.io/core:/stable:/{{ jenkins_k8s_apt_channel }}/deb/ /
+    mode: "0644"
+
+- name: Install kubectl on Jenkins host (match Master / cluster)
+  ansible.builtin.apt:
+    name: "kubectl={{ jenkins_kubectl_pkg_version }}"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+
+- name: Hold kubectl package version
+  ansible.builtin.dpkg_selections:
+    name: kubectl
+    selection: hold
+
+- name: Create Jenkins kubeconfig directory on host
+  ansible.builtin.file:
+    path: "{{ jenkins_kube_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read kubeconfig from Kubernetes master
+  ansible.builtin.slurp:
+    src: "{{ jenkins_kubeconfig_master_src }}"
+  delegate_to: "{{ groups['master'][0] }}"
+  register: master_kubeconfig_slurp
+
+- name: Write master kubeconfig onto Jenkins host
+  ansible.builtin.copy:
+    content: "{{ master_kubeconfig_slurp.content | b64decode }}"
+    dest: "{{ jenkins_kubeconfig_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  # 0644 so the jenkins container user (uid 1000) can read the bind-mount
 
 - name: Create Jenkins data volume
   ansible.builtin.command: docker volume create jenkins_home
@@ -11,29 +92,97 @@
   register: docker_names
   changed_when: false
 
+- name: Inspect existing Jenkins container mounts
+  ansible.builtin.command: >
+    docker inspect jenkins
+    --format {% raw %}{{json .HostConfig.Binds}}{% endraw %}
+  register: jenkins_binds
+  when: "'jenkins' in docker_names.stdout_lines"
+  changed_when: false
+  failed_when: false
+
+- name: Inspect existing Jenkins container env
+  ansible.builtin.command: >
+    docker inspect jenkins
+    --format {% raw %}{{json .Config.Env}}{% endraw %}
+  register: jenkins_env
+  when: "'jenkins' in docker_names.stdout_lines"
+  changed_when: false
+  failed_when: false
+
+- name: Read host docker group GID (so container jenkins user can use the socket)
+  ansible.builtin.command: getent group docker
+  register: docker_group_ent
+  changed_when: false
+  failed_when: false
+
+- name: Set docker socket GID for Jenkins container
+  ansible.builtin.set_fact:
+    jenkins_docker_gid: "{{ docker_group_ent.stdout.split(':')[2] | default('0') }}"
+  when: docker_group_ent.rc == 0 and (docker_group_ent.stdout | length > 0)
+
+- name: Decide whether Jenkins container must be recreated (kubectl/docker/kubeconfig/TZ)
+  ansible.builtin.set_fact:
+    jenkins_needs_recreate: >-
+      {{
+        ('jenkins' not in docker_names.stdout_lines)
+        or
+        (jenkins_binds.stdout is not defined)
+        or
+        (jenkins_kubeconfig_path not in (jenkins_binds.stdout | default('')))
+        or
+        (jenkins_kubectl_host_path not in (jenkins_binds.stdout | default('')))
+        or
+        (jenkins_docker_host_path not in (jenkins_binds.stdout | default('')))
+        or
+        ('TZ=' ~ (container_timezone | default('Asia/Kolkata')) not in (jenkins_env.stdout | default('')))
+      }}
+
+- name: Stop and remove outdated Jenkins container (keeps jenkins_home volume)
+  ansible.builtin.command: docker rm -f jenkins
+  when:
+    - "'jenkins' in docker_names.stdout_lines"
+    - jenkins_needs_recreate | bool
+  changed_when: true
+
+- name: Refresh container name list after remove
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
 - name: Start existing Jenkins container
   ansible.builtin.command: docker start jenkins
-  when: "'jenkins' in docker_names.stdout_lines"
+  when:
+    - "'jenkins' in docker_names.stdout_lines"
+    - not (jenkins_needs_recreate | bool)
   register: jenkins_start
   changed_when: jenkins_start.rc == 0
   failed_when: false
 
 - name: Ensure Jenkins restarts when Docker/VM starts
   ansible.builtin.command: docker update --restart unless-stopped jenkins
-  when: "'jenkins' in docker_names.stdout_lines"
+  when:
+    - "'jenkins' in docker_names.stdout_lines"
+    - not (jenkins_needs_recreate | bool)
   changed_when: true
 
-- name: Run Jenkins container
+- name: Run Jenkins container (Docker sock + Docker CLI + Trivy + kubectl + kubeconfig)
   ansible.builtin.command: >
     docker run -d
     --name jenkins
     --restart unless-stopped
     --memory {{ jenkins_memory | default('2g') }}
+    --group-add {{ jenkins_docker_gid | default('0') }}
+    -e TZ={{ container_timezone | default('Asia/Kolkata') }}
+    -e KUBECONFIG={{ jenkins_kubeconfig_container_path }}
     -p {{ jenkins_http_port }}:8080
     -p {{ jenkins_agent_port }}:50000
     -v jenkins_home:/var/jenkins_home
     -v /var/run/docker.sock:/var/run/docker.sock
+    -v {{ jenkins_docker_host_path }}:{{ jenkins_docker_container_path }}:ro
     -v /usr/bin/trivy:/usr/local/bin/trivy:ro
+    -v {{ jenkins_kubectl_host_path }}:{{ jenkins_kubectl_container_path }}:ro
+    -v {{ jenkins_kubeconfig_path }}:{{ jenkins_kubeconfig_container_path }}:ro
     {{ jenkins_image }}
   when: "'jenkins' not in docker_names.stdout_lines"
 
@@ -57,10 +206,27 @@
   changed_when: false
   failed_when: false
 
+- name: Confirm kubectl + cluster access inside Jenkins container
+  ansible.builtin.command: docker exec jenkins kubectl get nodes
+  register: kubectl_in_jenkins
+  changed_when: false
+  failed_when: false
+
+- name: Confirm docker CLI inside Jenkins container
+  ansible.builtin.command: docker exec jenkins docker version --format {% raw %}{{.Client.Version}}{% endraw %}
+  register: docker_in_jenkins
+  changed_when: false
+  failed_when: false
+
 - name: Confirm Jenkins is up
   ansible.builtin.debug:
     msg: >
       Jenkins on port {{ jenkins_http_port }} (agent {{ jenkins_agent_port }}).
       URL: http://{{ ansible_host }}:{{ jenkins_http_port }}
-      Trivy in container: {{ trivy_in_jenkins.stdout | default('not detected - re-run after trivy role') }}
+      Host kubeconfig: {{ jenkins_kubeconfig_path }} (from Master {{ jenkins_kubeconfig_master_src }})
+      Container KUBECONFIG={{ jenkins_kubeconfig_container_path }}
+      kubectl: {{ jenkins_kubectl_pkg_version | default(kubectl_pkg_version) }}
+      docker CLI: {{ docker_in_jenkins.stdout | default('FAILED — recreate container / check socket perms') }}
+      Trivy in container: {{ trivy_in_jenkins.stdout | default('not detected') }}
+      kubectl get nodes: {{ kubectl_in_jenkins.stdout_lines | default(['FAILED — check API :6443 from Jenkins / SG VPC rules']) }}
       Initial admin password: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword

@@ -7,8 +7,13 @@
 #   SonarQube -> 9000
 #   Nexus    -> 8081
 #
-# Run AFTER site.yml if you only care about tools; BEFORE site-nginx.yml
-# so upstreams are listening when the edge proxy is configured.
+# Run AFTER site.yml (cluster must exist — Jenkins copies Master kubeconfig).
+# Run BEFORE site-nginx.yml so upstreams are listening when the edge proxy is configured.
+#
+# Jenkins CD extras (roles/jenkins):
+#   - installs kubectl (same pin as group_vars/all.yml)
+#   - copies /etc/kubernetes/admin.conf from Master → /opt/scopify-kube/config
+#   - mounts kubectl + kubeconfig into the Jenkins container (KUBECONFIG=/kube/config)
 
 ---
 - name: Prepare CI/CD tool VMs (packages + Docker)
@@ -20,6 +25,7 @@
   roles:
     - packages
     - docker
+    - ssm_login
 
 - name: Install Trivy and run Jenkins
   hosts: jenkins

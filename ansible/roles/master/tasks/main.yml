@@ -12,6 +12,13 @@
 #   6) Verify kubectl works before finishing
 
 ---
+- name: Install master-only utilities
+  ansible.builtin.apt:
+    name: "{{ master_extra_packages }}"
+    state: present
+    update_cache: true
+  when: master_extra_packages | default([]) | length > 0
+
 - name: Load kernel modules required by Kubernetes
   community.general.modprobe:
     name: "{{ item }}"
@@ -168,7 +175,23 @@
   until: calico_apply.rc == 0
   changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"
 
-- name: Deploy NGINX Ingress Controller
+# Old controller-v0.49 watches extensions/v1beta1 Ingress → CrashLoop on K8s ≥1.22.
+# Always replace namespace so a bad install cannot linger beside the new manifest.
+- name: Remove previous Ingress-Nginx namespace (clears CrashLoop / API mismatch leftovers)
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    kubectl delete namespace ingress-nginx
+    --ignore-not-found=true
+    --wait=true
+    --timeout=120s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ingress_ns_delete
+  changed_when: "'deleted' in ingress_ns_delete.stdout"
+  failed_when: false
+
+- name: Deploy NGINX Ingress Controller ({{ ingress_nginx_version }} — networking.k8s.io/v1)
   become: yes
   become_user: "{{ kubeconfig_user }}"
   ansible.builtin.command: "kubectl apply -f {{ ingress_nginx_manifest_url }}"
@@ -179,6 +202,22 @@
   delay: 15
   until: ingress_apply.rc == 0
   changed_when: "'created' in ingress_apply.stdout or 'configured' in ingress_apply.stdout"
+
+- name: Wait until Ingress Controller pods are Ready
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    kubectl -n ingress-nginx wait
+    --for=condition=Ready pod
+    -l app.kubernetes.io/component=controller
+    --timeout=180s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ingress_ready
+  retries: 3
+  delay: 20
+  until: ingress_ready.rc == 0
+  changed_when: false
 
 - name: Verify kubectl works for {{ kubeconfig_user }}
   become: yes

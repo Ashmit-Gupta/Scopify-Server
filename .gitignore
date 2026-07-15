@@ -27,6 +27,8 @@ keys/
 *.retry
 .vault_pass
 .vault_pass.txt
+group_vars/nginx_secrets.yml
+**/cloudflare.ini
 
 # OS / editor
 .DS_Store
@@ -34,3 +36,5 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+config

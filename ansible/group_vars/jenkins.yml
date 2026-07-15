@@ -3,3 +3,16 @@ jenkins_image: "jenkins/jenkins:latest"
 jenkins_http_port: 8080
 jenkins_agent_port: 50000
 jenkins_memory: "2g"
+
+# kubectl on Jenkins host + kubeconfig copied from K8s master (for CD pipelines)
+# Uses same version pins as group_vars/all.yml (kubernetes_version / kubectl_pkg_version)
+jenkins_kube_dir: /opt/scopify-kube
+jenkins_kubeconfig_path: /opt/scopify-kube/config
+jenkins_kubeconfig_container_path: /kube/config
+jenkins_kubectl_host_path: /usr/bin/kubectl
+jenkins_kubectl_container_path: /usr/local/bin/kubectl
+# Docker CLI → host engine via /var/run/docker.sock (not DinD)
+jenkins_docker_host_path: /usr/bin/docker
+jenkins_docker_container_path: /usr/bin/docker
+# Source on master (admin credentials — lab only; use a deploy SA later for prod)
+jenkins_kubeconfig_master_src: /etc/kubernetes/admin.conf

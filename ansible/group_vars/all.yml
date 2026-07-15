@@ -14,14 +14,32 @@ jenkins_hostname: "jenkins.ashmit.xyz"
 sonar_hostname: "sonar.ashmit.xyz"
 nexus_hostname: "nexus.ashmit.xyz"
 
-# Kubernetes version (kubeadm / kubelet / kubectl package pin)
-kubernetes_version: "1.28.1"
-kubeadm_pkg_version: "1.28.1-1.1"
-kubelet_pkg_version: "1.28.1-1.1"
-kubectl_pkg_version: "1.28.1-1.1"
+# Timezone for all long-running Docker containers (Jenkins / Sonar / Nexus / Nginx)
+container_timezone: "Asia/Kolkata"
 
-kubernetes_apt_key_url: "https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key"
-kubernetes_apt_repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /"
+# ─── Kubernetes version bundle (mutually compatible — Jul 2026) ───────────────
+# K8s has no classic LTS; supported minors today: 1.36 / 1.35 / 1.34.
+#
+# Absolute newest K8s = 1.36.x, BUT community ingress-nginx was retired (Mar 2026);
+# its FINAL release is controller-v1.15.1 and was only CI-tested through K8s 1.35.
+# So the latest *compatible* bundle is:
+#   kubeadm/kubelet/kubectl  1.35.6
+#   Calico                   v3.32.1  (tested on 1.34–1.36)
+#   Ingress-Nginx            controller-v1.15.1  (networking.k8s.io/v1 — NOT v0.49)
+#
+# DO NOT use controller-v0.49 — it still watches *v1beta1.Ingress and CrashLoops on
+# any modern cluster (exactly the Failed to watch *v1beta1.Ingress error).
+#
+# WARNING: Changing these does NOT upgrade an existing 1.28 cluster by itself.
+# Fix ingress NOW with kubectl (see below), or rebuild nodes and re-run site.yml.
+
+kubernetes_version: "1.35.6"
+kubeadm_pkg_version: "1.35.6-1.1"
+kubelet_pkg_version: "1.35.6-1.1"
+kubectl_pkg_version: "1.35.6-1.1"
+
+kubernetes_apt_key_url: "https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key"
+kubernetes_apt_repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /"
 
 pod_network_cidr: "10.244.0.0/16"
 
@@ -34,5 +52,10 @@ k8s_kernel_modules:
   - br_netfilter
   - overlay
 
-calico_manifest_url: "https://docs.projectcalico.org/manifests/calico.yaml"
-ingress_nginx_manifest_url: "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.49.0/deploy/static/provider/baremetal/deploy.yaml"
+# Pin Calico (floating docs URL drifts). Manifest leaves IPV4POOL commented → uses kubeadm CIDR.
+calico_version: "v3.32.1"
+calico_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+
+# Pin Ingress-Nginx (old v0.49 was for K8s ≤1.18). Baremetal = NodePort on kubeadm VMs.
+ingress_nginx_version: "controller-v1.15.1"
+ingress_nginx_manifest_url: "https://raw.githubusercontent.com/kubernetes/ingress-nginx/{{ ingress_nginx_version }}/deploy/static/provider/baremetal/deploy.yaml"

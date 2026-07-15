@@ -20,7 +20,7 @@ Ansible site.yml
    └─ Play 3: workers  → Workers only (kubeadm join)
         │
         ▼
-Kubernetes cluster (kubeadm 1.28.1 + Calico + NGINX Ingress)
+Kubernetes cluster (kubeadm 1.35.6 + Calico v3.32.1 + Ingress-Nginx v1.15.1)
 ```
 
 | Role | Hosts | Job |
@@ -29,7 +29,7 @@ Kubernetes cluster (kubeadm 1.28.1 + Calico + NGINX Ingress)
 | `master` | Master only | Create control plane, kubeconfig, Calico, ingress |
 | `workers` | Workers only | Join the cluster using Master’s join token |
 
-Version pin (from `group_vars/all.yml`): **Kubernetes 1.28.1**, pod network CIDR **`10.244.0.0/16`**.
+Version pin (from `group_vars/all.yml`): **Kubernetes 1.35.6**, Calico **v3.32.1**, Ingress-Nginx **v1.15.1**, pod CIDR **`10.244.0.0/16`**.
 
 ---
 
@@ -53,7 +53,7 @@ Every node that will run pods (Master and workers) needs the same baseline:
 - No swap (kubeadm requirement)
 - Kernel modules + sysctl for bridging / IP forwarding
 - **containerd** (actual CRI used by kubelet) with `SystemdCgroup = true`
-- **kubeadm**, **kubelet**, **kubectl** at 1.28.1 (packages held so apt won’t upgrade them)
+- **kubeadm**, **kubelet**, **kubectl** at 1.35.6 (packages held so apt won’t upgrade them)
 
 Without this, `kubeadm init` / `kubeadm join` fails (e.g. missing `br_netfilter`, or etcd/apiserver CrashLoopBackOff if containerd cgroups are wrong).
 
@@ -125,7 +125,7 @@ Without `br_netfilter` / those sysctls, `kubeadm init` fails preflight (`bridge-
 | **kubelet** | Runs control-plane static pods + node agent | Runs pods on that node |
 | **kubectl** | Cluster CLI (primary place to use it) | Optional; not needed for day-to-day |
 
-Also installed: apt HTTPS deps, Kubernetes apt repo + GPG key, then packages pinned to **1.28.1** and **held** so accidental `apt upgrade` doesn’t break the cluster.
+Also installed: apt HTTPS deps, Kubernetes apt repo + GPG key, then packages pinned to **1.35.6** and **held** so accidental `apt upgrade` doesn’t break the cluster.
 
 ---
 

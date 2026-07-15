@@ -17,6 +17,27 @@
   register: docker_names
   changed_when: false
 
+- name: Inspect Nexus env (recreate if TZ missing)
+  ansible.builtin.command: >
+    docker inspect nexus
+    --format {% raw %}{{json .Config.Env}}{% endraw %}
+  register: nexus_env
+  when: "'nexus' in docker_names.stdout_lines"
+  changed_when: false
+  failed_when: false
+
+- name: Recreate Nexus when timezone env is missing
+  ansible.builtin.command: docker rm -f nexus
+  when:
+    - "'nexus' in docker_names.stdout_lines"
+    - ('TZ=' ~ (container_timezone | default('Asia/Kolkata'))) not in (nexus_env.stdout | default(''))
+  changed_when: true
+
+- name: Refresh container name list after Nexus recreate
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
 - name: Start existing Nexus container
   ansible.builtin.command: docker start nexus
   when: "'nexus' in docker_names.stdout_lines"
@@ -32,6 +53,7 @@
     docker run -d
     --name nexus
     --restart unless-stopped
+    -e TZ={{ container_timezone | default('Asia/Kolkata') }}
     -p {{ nexus_http_port }}:8081
     -v nexus_data:/nexus-data
     {{ nexus_image }}
@@ -47,6 +69,6 @@
 - name: Confirm Nexus is up
   ansible.builtin.debug:
     msg: >
-      Nexus running on port {{ nexus_http_port }}.
+      Nexus running on port {{ nexus_http_port }} (TZ={{ container_timezone | default('Asia/Kolkata') }}).
       Open http://{{ ansible_host }}:{{ nexus_http_port }}
       Initial admin password: docker exec nexus cat /nexus-data/admin.password

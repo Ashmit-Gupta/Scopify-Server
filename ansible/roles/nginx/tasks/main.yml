@@ -2,7 +2,7 @@
 # roles/nginx — run Nginx as a Docker container (edge reverse proxy)
 # Prerequisites: docker role (see site-nginx.yml)
 # --restart unless-stopped → starts again on reboot when Docker starts
-# HTTPS: certbot webroot → mount /etc/letsencrypt into the container
+# HTTPS: Let's Encrypt wildcard (ashmit.xyz + *.ashmit.xyz) via Cloudflare DNS-01
 
 - name: Stop and disable host nginx if present (we use Docker instead)
   ansible.builtin.systemd:
@@ -28,6 +28,11 @@
     - "{{ nginx_config_dir }}"
     - "{{ nginx_certbot_webroot }}/.well-known/acme-challenge"
     - "{{ nginx_letsencrypt_dir }}"
+
+- name: Load Cloudflare API token from nginx_secrets.yml (if present)
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/group_vars/nginx_secrets.yml"
+  failed_when: false
 
 - name: Resolve backend private IPs from inventory
   ansible.builtin.set_fact:
@@ -81,7 +86,16 @@
   changed_when: false
   failed_when: false
 
-- name: Decide whether Nginx container must be recreated (SSL volume mounts)
+- name: Inspect existing Nginx container env
+  ansible.builtin.command: >
+    docker inspect {{ nginx_container_name }}
+    --format {% raw %}{{json .Config.Env}}{% endraw %}
+  register: nginx_env
+  when: "nginx_container_name in docker_names.stdout_lines"
+  changed_when: false
+  failed_when: false
+
+- name: Decide whether Nginx container must be recreated (SSL mounts / TZ)
   ansible.builtin.set_fact:
     nginx_needs_recreate: >-
       {{
@@ -92,6 +106,8 @@
         (nginx_letsencrypt_dir not in (nginx_binds.stdout | default('')))
         or
         (nginx_certbot_webroot not in (nginx_binds.stdout | default('')))
+        or
+        ('TZ=' ~ (container_timezone | default('Asia/Kolkata')) not in (nginx_env.stdout | default('')))
       }}
 
 - name: Stop and remove outdated Nginx container
@@ -128,6 +144,7 @@
     --name {{ nginx_container_name }}
     --restart unless-stopped
     --memory {{ nginx_memory }}
+    -e TZ={{ container_timezone | default('Asia/Kolkata') }}
     -p {{ nginx_http_port }}:80
     -p {{ nginx_https_port }}:443
     -v {{ nginx_config_dir }}:/etc/nginx/conf.d:ro
@@ -143,27 +160,62 @@
     delay: 3
     timeout: 60
 
-- name: Install certbot for Let's Encrypt
+- name: Install certbot + Cloudflare DNS plugin (wildcard certs need DNS-01)
   ansible.builtin.apt:
-    name: certbot
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
     state: present
     update_cache: true
   when: nginx_enable_https | bool
 
-- name: Obtain Let's Encrypt certificate (webroot)
+- name: Fail if Cloudflare DNS API token missing (required for *.{{ edge_domain }})
+  ansible.builtin.fail:
+    msg: >-
+      Wildcard cert needs Cloudflare DNS API token.
+      Copy group_vars/nginx_secrets.yml.example → group_vars/nginx_secrets.yml
+      and set cloudflare_dns_api_token (Zone DNS Edit for {{ edge_domain }}).
+  when:
+    - nginx_enable_https | bool
+    - nginx_certbot_method | default('dns-cloudflare') == 'dns-cloudflare'
+    - (cloudflare_dns_api_token | default('') | length) == 0
+
+- name: Write Cloudflare credentials for certbot (mode 0600)
+  ansible.builtin.copy:
+    dest: "{{ nginx_cloudflare_credentials_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Managed by Ansible — do not commit
+      dns_cloudflare_api_token = {{ cloudflare_dns_api_token }}
+  when:
+    - nginx_enable_https | bool
+    - nginx_certbot_method | default('dns-cloudflare') == 'dns-cloudflare'
+    - (cloudflare_dns_api_token | default('') | length) > 0
+
+- name: Obtain / refresh Let's Encrypt wildcard certificate (DNS-01 Cloudflare)
   ansible.builtin.command: >
-    certbot certonly --webroot
-    -w {{ nginx_certbot_webroot }}
+    certbot certonly
+    --dns-cloudflare
+    --dns-cloudflare-credentials {{ nginx_cloudflare_credentials_path }}
+    --dns-cloudflare-propagation-seconds 60
+    --cert-name {{ nginx_ssl_primary_hostname }}
     {% for h in nginx_ssl_hostnames %}-d {{ h }} {% endfor %}
     --email {{ nginx_ssl_email }}
     --agree-tos
     --non-interactive
-    --keep-until-expiring
+    {% if nginx_ssl_force_wildcard | default(false) | bool %}--force-renewal{% else %}--keep-until-expiring{% endif %}
   register: certbot_issue
   when:
     - nginx_enable_https | bool
-    - not (nginx_tls_ready | bool)
-  changed_when: "'Congratulations' in certbot_issue.stdout or 'Successfully received' in certbot_issue.stdout"
+    - nginx_certbot_method | default('dns-cloudflare') == 'dns-cloudflare'
+    - (not (nginx_tls_ready | bool)) or (nginx_ssl_force_wildcard | default(false) | bool)
+  changed_when: >-
+    'Congratulations' in (certbot_issue.stdout | default(''))
+    or 'Successfully received' in (certbot_issue.stdout | default(''))
+    or 'Certificate not yet due' in (certbot_issue.stdout | default(''))
+  failed_when: certbot_issue.rc != 0 and 'Certificate not yet due' not in (certbot_issue.stdout | default(''))
 
 - name: Re-check certificate after certbot
   ansible.builtin.stat:
@@ -216,10 +268,13 @@
       Nginx Docker container '{{ nginx_container_name }}' ({{ nginx_status.stdout }})
       image={{ nginx_image }} restart=unless-stopped
       HTTPS={{ 'enabled' if (nginx_tls_ready | bool) else 'pending (HTTP only until certbot succeeds)' }}.
-      URLs:
+      Wildcard cert: {{ nginx_ssl_hostnames | join(', ') }}
+      paths: {{ nginx_ssl_cert_path }}
+      URLs (examples):
       https://{{ jenkins_hostname }},
       https://{{ sonar_hostname }},
-      https://{{ nexus_hostname }}.
+      https://{{ nexus_hostname }},
+      https://test-k8s.{{ edge_domain }}.
       Upstreams: jenkins={{ jenkins_upstream }}:{{ jenkins_backend_port }},
       sonar={{ sonar_upstream }}:{{ sonar_backend_port }},
       nexus={{ nexus_upstream }}:{{ nexus_backend_port }}

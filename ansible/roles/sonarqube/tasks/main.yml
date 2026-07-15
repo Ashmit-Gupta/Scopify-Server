@@ -22,6 +22,27 @@
   register: docker_names
   changed_when: false
 
+- name: Inspect SonarQube env (recreate if TZ missing)
+  ansible.builtin.command: >
+    docker inspect sonarqube
+    --format {% raw %}{{json .Config.Env}}{% endraw %}
+  register: sonar_env
+  when: "'sonarqube' in docker_names.stdout_lines"
+  changed_when: false
+  failed_when: false
+
+- name: Recreate SonarQube when timezone env is missing
+  ansible.builtin.command: docker rm -f sonarqube
+  when:
+    - "'sonarqube' in docker_names.stdout_lines"
+    - ('TZ=' ~ (container_timezone | default('Asia/Kolkata'))) not in (sonar_env.stdout | default(''))
+  changed_when: true
+
+- name: Refresh container name list after Sonar recreate
+  ansible.builtin.command: docker ps -a --format {% raw %}{{.Names}}{% endraw %}
+  register: docker_names
+  changed_when: false
+
 - name: Start existing SonarQube container
   ansible.builtin.command: docker start sonarqube
   when: "'sonarqube' in docker_names.stdout_lines"
@@ -37,6 +58,7 @@
     docker run -d
     --name sonarqube
     --restart unless-stopped
+    -e TZ={{ container_timezone | default('Asia/Kolkata') }}
     -p {{ sonar_http_port }}:9000
     -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
     -v sonarqube_data:/opt/sonarqube/data
@@ -55,6 +77,6 @@
 - name: Confirm SonarQube is up
   ansible.builtin.debug:
     msg: >
-      SonarQube running on port {{ sonar_http_port }}.
+      SonarQube running on port {{ sonar_http_port }} (TZ={{ container_timezone | default('Asia/Kolkata') }}).
       Open http://{{ ansible_host }}:{{ sonar_http_port }}
       Default login: admin / admin

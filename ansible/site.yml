@@ -1,5 +1,6 @@
 # ansible/site.yml
-# K8s 1.28.1 cluster setup via kubeadm — PRIVATE subnet nodes (custom VPC)
+# K8s 1.35.6 + Calico v3.32.1 + Ingress-Nginx v1.15.1 — PRIVATE subnet (custom VPC)
+# Version pins: group_vars/all.yml
 #
 # Play 1: all K8s nodes → common role
 # Play 2: master       → master role
@@ -16,6 +17,7 @@
 
   roles:
     - common
+    - ssm_login
 
 - name: Initialize and configure Kubernetes master
   hosts: master

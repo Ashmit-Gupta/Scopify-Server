@@ -136,6 +136,16 @@
   ansible.builtin.apt:
     update_cache: yes
 
+- name: Unhold Kubernetes packages before (re)install / version pin change
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: install
+  loop:
+    - kubeadm
+    - kubelet
+    - kubectl
+  failed_when: false
+
 - name: Install Kubernetes components
   ansible.builtin.apt:
     name:
@@ -143,6 +153,7 @@
       - "kubelet={{ kubelet_pkg_version }}"
       - "kubectl={{ kubectl_pkg_version }}"
     state: present
+    allow_downgrade: true
 
 - name: Hold Kubernetes packages at current version
   ansible.builtin.dpkg_selections:
@@ -155,4 +166,4 @@
 
 - name: Confirm common node setup
   ansible.builtin.debug:
-    msg: "Node {{ inventory_hostname }} ready — Docker + Kubernetes {{ kubernetes_version }} packages installed."
+    msg: "Node {{ inventory_hostname }} ready — Docker + Kubernetes {{ kubernetes_version }} packages installed (Calico {{ calico_version }}, Ingress {{ ingress_nginx_version }})."
