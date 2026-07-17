@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scopify-api
+  namespace: scopify-dev
+  labels:
+    app: scopify-api
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scopify-api
+  template:
+    metadata:
+      labels:
+        app: scopify-api
+        environment: dev
+    spec:
+      # imagePullSecrets:
+      #   - name: ghcr-pull
+      containers:
+        - name: api
+          image: ghcr.io/ashmit-gupta/scopify-backend:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - secretRef:
+                name: scopify-api-env
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

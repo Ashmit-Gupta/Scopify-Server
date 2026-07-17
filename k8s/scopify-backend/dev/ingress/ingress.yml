@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scopify-api
+  namespace: scopify-dev
+  labels:
+    app: scopify-api
+    environment: dev
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api-dev.ashmit.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scopify-api
+                port:
+                  number: 3000

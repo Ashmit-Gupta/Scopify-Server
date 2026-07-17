@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scopify-api
+  namespace: scopify-prod
+  labels:
+    app: scopify-api
+    environment: prod
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: http
+      name: http
+  selector:
+    app: scopify-api

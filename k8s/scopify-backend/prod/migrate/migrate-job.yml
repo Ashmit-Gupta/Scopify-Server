@@ -1,0 +1,42 @@
+# One-off Prisma migration — same as docker-compose migrate-prod
+# Re-run when schema changes: kubectl -n scopify-prod delete job scopify-migrate
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scopify-migrate
+  namespace: scopify-prod
+  labels:
+    app: scopify-api
+    component: migrate
+    environment: prod
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: scopify-api
+        component: migrate
+        environment: prod
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: ghcr.io/ashmit-gupta/scopify-backend:1.0.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - npx
+            - prisma
+            - migrate
+            - deploy
+            - --config
+            - prisma.config.ts
+          envFrom:
+            - secretRef:
+                name: scopify-api-env
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

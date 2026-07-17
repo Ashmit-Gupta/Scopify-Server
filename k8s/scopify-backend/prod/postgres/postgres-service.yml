@@ -1,0 +1,17 @@
+# Headless Service — stable DNS for StatefulSet pods (postgres-0.postgres.scopify-prod...)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: scopify-prod
+  labels:
+    app: postgres
+    environment: prod
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: postgres
+  clusterIP: None

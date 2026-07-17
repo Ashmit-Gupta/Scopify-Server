@@ -1,0 +1,22 @@
+# In-cluster Host routing — edge Nginx proxies api.ashmit.xyz → Ingress NodePort
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scopify-api
+  namespace: scopify-prod
+  labels:
+    app: scopify-api
+    environment: prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.ashmit.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scopify-api
+                port:
+                  number: 3000
