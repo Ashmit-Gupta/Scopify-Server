@@ -10,102 +10,52 @@ Plain YAML (no Kustomize). Two environments as separate folders:
 ## Folder layout (prod and dev mirror each other)
 
 ```
-scopify-backend/prod/
+scopify-backend/prod/   (dev/ is the same)
 ├── namespace/
 │   └── namespace.yml
 ├── secrets/
-│   └── secret.example.yml          # instructions only — create secrets via kubectl
+│   ├── postgres-secret.yml.example   # template (committed)
+│   ├── api-secret.yml.example        # template (committed)
+│   ├── postgres-secret.yml           # real values (gitignored)
+│   └── api-secret.yml                # real values (gitignored)
 ├── postgres/
-│   ├── postgres-service.yml
-│   └── postgres-deployment.yml     # PVC + StatefulSet
 ├── redis/
-│   ├── redis-service.yml
-│   └── redis-deployment.yml        # PVC + Deployment
 ├── migrate/
-│   └── migrate-job.yml             # one-off Prisma migrate Job
 ├── api/
-│   ├── api-service.yml
-│   └── api-deployment.yml
 └── ingress/
-    └── ingress.yml
-
-scopify-backend/secrets/              # real env files (gitignored)
-├── postgres.env.example
-├── api.env.example
-└── .gitignore
 ```
 
-**Image** is built from `Scopify Backend/backend/Dockerfile` and pushed to GHCR — not from docker-compose.
+**Image** is built from `Scopify Backend/backend/Dockerfile` and pushed to GHCR.
 
-## Prerequisites
-
-- Cluster ready (`ansible-playbook site.yml`)
-- Ingress controller running (`kubectl get pods -n ingress-nginx`)
-- Edge Nginx route for API host → Ingress NodePort (see `docs/SERVER_STRUCTURE.md`)
-- Cloudflare A record for `api.ashmit.xyz` / `api-dev.ashmit.xyz` → Nginx EIP
-
-## Secrets (never commit real values)
+## Secrets (copy example → real file, then apply)
 
 ```bash
-cp scopify-backend/secrets/postgres.env.example scopify-backend/secrets/prod-postgres.env
-cp scopify-backend/secrets/api.env.example scopify-backend/secrets/prod-api.env
-# edit both files with real passwords
+cd k8s/scopify-backend/dev/secrets
 
-kubectl apply -f scopify-backend/prod/namespace/
+cp postgres-secret.yml.example postgres-secret.yml
+cp api-secret.yml.example api-secret.yml
+# edit CHANGE_ME_* in both files (same password in POSTGRES_PASSWORD and DATABASE_URL)
 
-kubectl -n scopify-prod create secret generic scopify-postgres \
-  --from-env-file=scopify-backend/secrets/prod-postgres.env
-
-kubectl -n scopify-prod create secret generic scopify-api-env \
-  --from-env-file=scopify-backend/secrets/prod-api.env
+kubectl apply -f ../namespace/
+kubectl apply -f postgres-secret.yml
+kubectl apply -f api-secret.yml
 ```
 
-If GHCR image is private, create a pull secret once per namespace:
+Same for `prod/secrets/`. Real `*-secret.yml` files are gitignored.
 
-```bash
-kubectl -n scopify-prod create secret docker-registry ghcr-pull \
-  --docker-server=ghcr.io \
-  --docker-username=YOUR_GITHUB_USER \
-  --docker-password=YOUR_GHCR_TOKEN
-```
+Jenkins does **not** apply secrets (avoids applying examples). Create them once before the first deploy.
 
-Then uncomment `imagePullSecrets` in `api/api-deployment.yml`.
-
-## Apply order (prod)
-
-Run from repo root on the **Master** node (or anywhere with kubeconfig):
+## Apply order (dev)
 
 ```bash
 cd k8s
 
-kubectl apply -f scopify-backend/prod/namespace/
-# secrets: see above
+kubectl apply -f scopify-backend/dev/namespace/
+# secrets: see above (required once)
 
-kubectl apply -f scopify-backend/prod/postgres/
-kubectl apply -f scopify-backend/prod/redis/
-
-kubectl wait -n scopify-prod --for=condition=ready pod -l app=postgres --timeout=180s
-kubectl wait -n scopify-prod --for=condition=ready pod -l app=redis --timeout=120s
-
-kubectl apply -f scopify-backend/prod/migrate/
-kubectl wait -n scopify-prod --for=condition=complete job/scopify-migrate --timeout=300s
-
-kubectl apply -f scopify-backend/prod/api/
-kubectl apply -f scopify-backend/prod/ingress/
-
-kubectl -n scopify-prod get pods,svc,ingress
-curl -k https://api.ashmit.xyz/health   # after edge Nginx is wired
+kubectl apply -f scopify-backend/dev/postgres/
+kubectl apply -f scopify-backend/dev/redis/
+# … then migrate, api, ingress (or let Jenkins Deploy do the rest)
 ```
 
-**Dev:** same commands with `scopify-backend/dev/` and namespace `scopify-dev`.
-
-## Re-deploy API only (new image tag)
-
-1. Build & push image (Dockerfile → GHCR).
-2. Edit `image:` tag in `api/api-deployment.yml`.
-3. If schema changed: `kubectl -n scopify-prod delete job scopify-migrate` then re-apply `migrate/`.
-4. `kubectl apply -f scopify-backend/prod/api/`
-
-## Move to Kustomize later
-
-Refactor duplicated prod/dev folders into `base/` + `overlays/prod|dev/` — same files, less duplication.
+If GHCR image is private, create `ghcr-pull` and uncomment `imagePullSecrets` in `api/api-deployment.yml`.
