@@ -57,6 +57,11 @@ module "iam_ssm" {
 
   name = var.project_name
   tags = local.common_tags
+
+  # Allows EBS CSI controller/node pods (using instance profile) to create/attach volumes
+  extra_policy_arns = var.enable_ebs_csi ? [
+    "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  ] : []
 }
 
 # ─── Security groups (existing module) ────────────────────────────────────────

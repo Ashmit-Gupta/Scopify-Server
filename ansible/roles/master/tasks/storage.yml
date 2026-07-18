@@ -1,0 +1,144 @@
+# Install Helm + AWS EBS CSI driver + default gp3 StorageClass
+# Requires: Terraform enable_ebs_csi=true (AmazonEBSCSIDriverPolicy on node IAM)
+
+- name: Check if Helm is already installed
+  ansible.builtin.command: helm version --short
+  register: helm_version_check
+  changed_when: false
+  failed_when: false
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+
+- name: Create temp dir for Helm download
+  ansible.builtin.file:
+    path: /tmp/helm-install
+    state: directory
+    mode: "0755"
+  when: helm_version_check.rc != 0
+
+- name: Download Helm {{ helm_version }}
+  ansible.builtin.get_url:
+    url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: /tmp/helm-install/helm.tar.gz
+    mode: "0644"
+  when: helm_version_check.rc != 0
+
+- name: Extract Helm archive
+  ansible.builtin.unarchive:
+    src: /tmp/helm-install/helm.tar.gz
+    dest: /tmp/helm-install
+    remote_src: yes
+  when: helm_version_check.rc != 0
+
+- name: Install Helm binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: /tmp/helm-install/linux-amd64/helm
+    dest: /usr/local/bin/helm
+    mode: "0755"
+    remote_src: yes
+  when: helm_version_check.rc != 0
+
+- name: Remove Helm download temp dir
+  ansible.builtin.file:
+    path: /tmp/helm-install
+    state: absent
+  when: helm_version_check.rc != 0
+
+- name: Verify Helm works
+  ansible.builtin.command: helm version --short
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Add AWS EBS CSI Helm repository
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    helm repo add aws-ebs-csi-driver
+    https://kubernetes-sigs.github.io/aws-ebs-csi-driver
+    --force-update
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: true
+
+- name: Update Helm repositories
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: helm repo update
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: true
+
+- name: Install / upgrade AWS EBS CSI driver (chart {{ ebs_csi_chart_version }})
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    helm upgrade --install aws-ebs-csi-driver
+    aws-ebs-csi-driver/aws-ebs-csi-driver
+    --namespace kube-system
+    --version {{ ebs_csi_chart_version }}
+    --set controller.replicaCount={{ ebs_csi_controller_replicas }}
+    --wait
+    --timeout 5m
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ebs_csi_helm
+  retries: 3
+  delay: 20
+  until: ebs_csi_helm.rc == 0
+
+- name: Wait until EBS CSI controller is Ready
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    kubectl -n kube-system rollout status
+    deployment/ebs-csi-controller
+    --timeout=180s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ebs_csi_ready
+  retries: 3
+  delay: 15
+  until: ebs_csi_ready.rc == 0
+  changed_when: false
+
+- name: Deploy default gp3 StorageClass
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.template:
+    src: storageclass-gp3.yml.j2
+    dest: /tmp/scopify-storageclass-gp3.yml
+    mode: "0644"
+  register: sc_template
+
+- name: Apply gp3 StorageClass
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: kubectl apply -f /tmp/scopify-storageclass-gp3.yml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: sc_apply
+  changed_when: "'created' in sc_apply.stdout or 'configured' in sc_apply.stdout"
+
+- name: Confirm StorageClass gp3 exists
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: kubectl get storageclass gp3
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Show storage stack status
+  ansible.builtin.debug:
+    msg: >
+      Helm + AWS EBS CSI + StorageClass gp3 ready on {{ inventory_hostname }}.
+      Ensure Terraform enable_ebs_csi=true (AmazonEBSCSIDriverPolicy on node IAM)
+      or PVC provisioning will fail with UnauthorizedOperation.

@@ -144,6 +144,12 @@ variable "enable_ssm" {
   default     = true
 }
 
+variable "enable_ebs_csi" {
+  type        = bool
+  description = "Attach AmazonEBSCSIDriverPolicy to node IAM so kubeadm can provision gp3 PersistentVolumes via aws-ebs-csi-driver"
+  default     = true
+}
+
 variable "install_ssm_agent" {
   type        = bool
   description = "Inject Ubuntu cloud-init to install amazon-ssm-agent via snap (set false if AMI already has agent)"

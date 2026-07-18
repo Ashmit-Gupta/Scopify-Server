@@ -64,10 +64,18 @@ ansible master -m ping
 ansible tools -m ping
 
 # Order matters
-ansible-playbook site.yml          # K8s
+ansible-playbook site.yml          # K8s (+ Helm, EBS CSI, StorageClass gp3 on master)
 ansible-playbook site-tools.yml    # Jenkins / Sonar / Nexus (+ Jenkins kubectl + master kubeconfig)
 ansible-playbook site-nginx.yml    # Edge reverse proxy → private backends
 ansible-playbook site-ssm.yml      # SSM sessions auto-switch ssm-user → ubuntu (all hosts)
+```
+
+Storage (PVC) requires Terraform `enable_ebs_csi=true` **before** or with the next apply, then `site.yml` on master installs Helm + aws-ebs-csi-driver + `gp3` StorageClass.
+
+```bash
+# Storage-only re-run on an existing cluster:
+ansible-playbook site.yml --limit master
+# then: kubectl get sc ; kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-ebs-csi-driver
 ```
 
 Jenkins CD check after `site-tools.yml`:

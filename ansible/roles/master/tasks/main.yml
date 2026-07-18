@@ -172,8 +172,30 @@
   register: calico_apply
   retries: 5
   delay: 15
-  until: calico_apply.rc == 0
-  changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"
+  until: >
+    (calico_apply.rc == 0)
+    or
+    (
+      ('daemonset.apps/calico-node' in (calico_apply.stdout | default('')))
+      and
+      ('isCIDR' in (calico_apply.stderr | default('')))
+    )
+  # Core CNI can succeed while optional ClusterNetworkPolicy CRD fails (isCIDR CEL)
+  failed_when: >
+    (calico_apply.rc != 0)
+    and
+    ('daemonset.apps/calico-node' not in (calico_apply.stdout | default('')))
+  changed_when: "'created' in (calico_apply.stdout | default('')) or 'configured' in (calico_apply.stdout | default(''))"
+
+- name: Warn if Calico applied with skipped ClusterNetworkPolicy CRD
+  ansible.builtin.debug:
+    msg: >
+      Calico core components applied; ClusterNetworkPolicy CRD failed (isCIDR CEL).
+      Pod networking still works. Prefer calico_version v3.29.x in group_vars/all.yml.
+  when:
+    - calico_apply.rc is defined
+    - calico_apply.rc != 0
+    - "'isCIDR' in (calico_apply.stderr | default(''))"
 
 # Old controller-v0.49 watches extensions/v1beta1 Ingress → CrashLoop on K8s ≥1.22.
 # Always replace namespace so a bad install cannot linger beside the new manifest.
@@ -219,6 +241,11 @@
   until: ingress_ready.rc == 0
   changed_when: false
 
+# Helm + EBS CSI + default gp3 StorageClass (PVCs for Postgres/Redis)
+- name: Install Helm, AWS EBS CSI driver, and gp3 StorageClass
+  ansible.builtin.include_tasks: storage.yml
+  when: install_ebs_csi | default(true) | bool
+
 - name: Verify kubectl works for {{ kubeconfig_user }}
   become: yes
   become_user: "{{ kubeconfig_user }}"
@@ -247,4 +274,5 @@
     msg: >
       Master {{ inventory_hostname }} ready.
       kubectl works with {{ kubeconfig_path }}.
+      Helm + EBS CSI + StorageClass gp3: {{ 'enabled' if (install_ebs_csi | default(true) | bool) else 'skipped' }}.
       Join command: {{ kubeadm_join_command.stdout }}
