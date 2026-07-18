@@ -9,7 +9,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: aws-api.ashmit.xyz
+    - host: dev-aws-api.ashmit.xyz
       http:
         paths:
           - path: /
