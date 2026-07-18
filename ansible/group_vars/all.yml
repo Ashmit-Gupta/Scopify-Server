@@ -31,8 +31,9 @@ container_timezone: "Asia/Kolkata"
 # DO NOT use controller-v0.49 — it still watches *v1beta1.Ingress and CrashLoops on
 # any modern cluster (exactly the Failed to watch *v1beta1.Ingress error).
 #
-# WARNING: Changing these does NOT upgrade an existing 1.28 cluster by itself.
-# Fix ingress NOW with kubectl (see below), or rebuild nodes and re-run site.yml.
+# WARNING: Changing these alone does NOT upgrade nodes already at an older minor
+# (e.g. workers stuck on 1.28). Re-run site.yml so roles/common installs+holds
+# the pins below and ASSERTs `kubelet --version` matches kubernetes_version.
 
 kubernetes_version: "1.35.6"
 kubeadm_pkg_version: "1.35.6-1.1"

@@ -120,13 +120,47 @@
     state: directory
     mode: "0755"
 
-- name: Add Kubernetes GPG key
-  ansible.builtin.shell: |
-    curl -fsSL {{ kubernetes_apt_key_url }} | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-  args:
-    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+# Drop stale channels (e.g. leftover v1.28 list) so apt cannot pin old kubelet.
+- name: Remove stale Kubernetes apt source files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/kubernetes.list
+    - /etc/apt/sources.list.d/kubernetes.list.save
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.28_deb.list
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.29_deb.list
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.30_deb.list
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.31_deb.list
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.32_deb.list
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.33_deb.list
+    - /etc/apt/sources.list.d/pkgs.k8s.io_core_stable_v1.34_deb.list
 
-- name: Add Kubernetes apt repository
+- name: Prepare non-interactive GPG home for apt keyring
+  ansible.builtin.file:
+    path: /tmp/ansible-gnupg-k8s
+    state: directory
+    mode: "0700"
+
+- name: Remove previous Kubernetes apt keyring (allow rewrite)
+  ansible.builtin.file:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    state: absent
+
+- name: Add Kubernetes GPG key (always refresh — channel upgrades need a fresh keyring)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -fsSL {{ kubernetes_apt_key_url }} \
+      | gpg --batch --yes --no-tty --dearmor \
+        -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod 0644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    executable: /bin/bash
+  environment:
+    GNUPGHOME: /tmp/ansible-gnupg-k8s
+  changed_when: true
+
+- name: Add Kubernetes apt repository ({{ kubernetes_version }} channel)
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/kubernetes.list
     content: "{{ kubernetes_apt_repo }}\n"
@@ -146,14 +180,16 @@
     - kubectl
   failed_when: false
 
-- name: Install Kubernetes components
+- name: Install Kubernetes components (pinned {{ kubernetes_version }})
   ansible.builtin.apt:
     name:
       - "kubeadm={{ kubeadm_pkg_version }}"
       - "kubelet={{ kubelet_pkg_version }}"
       - "kubectl={{ kubectl_pkg_version }}"
     state: present
+    update_cache: true
     allow_downgrade: true
+  register: k8s_pkgs_install
 
 - name: Hold Kubernetes packages at current version
   ansible.builtin.dpkg_selections:
@@ -163,6 +199,42 @@
     - kubeadm
     - kubelet
     - kubectl
+
+# Leftover Docker-era flag crashes kubelet ≥1.27 (unknown flag: --pod-infra-container-image).
+- name: Scrub removed kubelet flag --pod-infra-container-image
+  ansible.builtin.replace:
+    path: "{{ item }}"
+    regexp: '--pod-infra-container-image=\S+\s*'
+    replace: ''
+  loop:
+    - /var/lib/kubelet/kubeadm-flags.env
+    - /etc/default/kubelet
+  failed_when: false
+  register: kubelet_flag_scrub
+
+- name: Restart kubelet after package / flag changes
+  ansible.builtin.systemd:
+    name: kubelet
+    state: restarted
+    daemon_reload: true
+    enabled: true
+  when: k8s_pkgs_install.changed or (kubelet_flag_scrub.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | list | length > 0)
+
+- name: Read installed kubelet version
+  ansible.builtin.command: kubelet --version
+  register: kubelet_version_check
+  changed_when: false
+
+- name: Fail if kubelet is not the pinned version {{ kubernetes_version }}
+  ansible.builtin.assert:
+    that:
+      - ("v" ~ kubernetes_version) in kubelet_version_check.stdout
+    fail_msg: >-
+      {{ inventory_hostname }} has {{ kubelet_version_check.stdout | trim }} but
+      group_vars pin Kubernetes {{ kubernetes_version }}. Fix apt repo / holds and re-run
+      site.yml on this host (common role). Do not join workers on a different minor
+      than the control plane.
+    success_msg: "{{ inventory_hostname }} kubelet matches pin {{ kubernetes_version }}"
 
 - name: Confirm common node setup
   ansible.builtin.debug:

@@ -18,6 +18,8 @@ spec:
         environment: dev
     spec:
       restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: migrate
           image: ghcr.io/ashmit-gupta/scopify-backend:1.0.0

@@ -1,10 +1,11 @@
 # ansible/site.yml
-# K8s 1.35.6 + Calico v3.32.1 + Ingress-Nginx v1.15.1 — PRIVATE subnet (custom VPC)
-# Version pins: group_vars/all.yml
+# K8s 1.35.6 + Calico v3.29.4 + Ingress-Nginx v1.15.1 — PRIVATE subnet (custom VPC)
+# Version pins: group_vars/all.yml  (common role ASSERTs kubelet matches this pin)
 #
-# Play 1: all K8s nodes → common role
-# Play 2: master       → master role
-# Play 3: workers      → workers role
+# Play 1: all K8s nodes → common role (install/upgrade kubeadm/kubelet/kubectl)
+# Play 2: master       → master role (init + CNI + ingress apply + CSI)
+# Play 3: workers      → workers role (kubeadm join)
+# Play 4: master       → wait for Ingress once workers can schedule pods
 #
 # Access: ProxyJump via Nginx or SSM (see cmds.md)
 
@@ -40,3 +41,39 @@
     - name: Cluster setup finished
       ansible.builtin.debug:
         msg: "Worker {{ inventory_hostname }} configuration complete."
+
+# Ingress Deployment cannot schedule on control-plane (NoSchedule). Wait here.
+- name: Wait for Ingress Controller after workers joined
+  hosts: master
+  become: yes
+  gather_facts: false
+
+  tasks:
+    - name: Wait until Ingress Controller pods are Ready
+      become: yes
+      become_user: "{{ kubeconfig_user | default('ubuntu') }}"
+      ansible.builtin.command: >
+        kubectl -n ingress-nginx wait
+        --for=condition=Ready pod
+        -l app.kubernetes.io/component=controller
+        --timeout=180s
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path | default('/home/ubuntu/.kube/config') }}"
+      register: ingress_ready_after_workers
+      retries: 5
+      delay: 20
+      until: ingress_ready_after_workers.rc == 0
+      changed_when: false
+
+    - name: Show Ingress pods
+      become: yes
+      become_user: "{{ kubeconfig_user | default('ubuntu') }}"
+      ansible.builtin.command: kubectl get pods -n ingress-nginx -o wide
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path | default('/home/ubuntu/.kube/config') }}"
+      register: ingress_pods
+      changed_when: false
+
+    - name: Ingress status
+      ansible.builtin.debug:
+        var: ingress_pods.stdout_lines

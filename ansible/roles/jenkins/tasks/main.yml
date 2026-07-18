@@ -24,7 +24,7 @@
 - name: Set Jenkins kubectl pin (prefer master's installed version)
   ansible.builtin.set_fact:
     jenkins_kubectl_pkg_version: "{{ master_kubectl_pkg.stdout | default(kubectl_pkg_version) }}"
-    # 1.28.1-1.1 → v1.28  (match pkgs.k8s.io channel on the Master)
+    # e.g. 1.35.6-1.1 → v1.35 (match pkgs.k8s.io channel on the Master)
     jenkins_k8s_apt_channel: "v{{ master_kubectl_pkg.stdout.split('.')[0] }}.{{ master_kubectl_pkg.stdout.split('.')[1] }}"
 
 - name: Ensure apt keyrings directory exists
@@ -33,12 +33,23 @@
     state: directory
     mode: "0755"
 
-- name: Add Kubernetes GPG key (for kubectl package)
+- name: Prepare non-interactive GPG home for apt keyring
+  ansible.builtin.file:
+    path: /tmp/ansible-gnupg-jenkins
+    state: directory
+    mode: "0700"
+
+- name: Add Kubernetes GPG key (for kubectl package; always refresh)
   ansible.builtin.shell: |
+    set -euo pipefail
     curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ jenkins_k8s_apt_channel }}/deb/Release.key \
-      | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      | gpg --batch --yes --no-tty --dearmor \
+        -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
-    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    executable: /bin/bash
+  environment:
+    GNUPGHOME: /tmp/ansible-gnupg-jenkins
+  changed_when: true
 
 - name: Add Kubernetes apt repository matching Master minor
   ansible.builtin.copy:

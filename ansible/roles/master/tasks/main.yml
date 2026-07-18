@@ -213,6 +213,16 @@
   changed_when: "'deleted' in ingress_ns_delete.stdout"
   failed_when: false
 
+# Join token BEFORE Ingress wait — workers must join before Ingress can schedule
+# (control-plane taint). Blocking on Ingress here previously aborted the playbook
+# before Helm/CSI and before hostvars[master].kubeadm_join_command was set.
+- name: Generate worker join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: kubeadm_join_command
+  changed_when: false
+
 - name: Deploy NGINX Ingress Controller ({{ ingress_nginx_version }} — networking.k8s.io/v1)
   become: yes
   become_user: "{{ kubeconfig_user }}"
@@ -225,21 +235,30 @@
   until: ingress_apply.rc == 0
   changed_when: "'created' in ingress_apply.stdout or 'configured' in ingress_apply.stdout"
 
-- name: Wait until Ingress Controller pods are Ready
+- name: Wait until Ingress Controller pods are Ready (best-effort — needs workers)
   become: yes
   become_user: "{{ kubeconfig_user }}"
   ansible.builtin.command: >
     kubectl -n ingress-nginx wait
     --for=condition=Ready pod
     -l app.kubernetes.io/component=controller
-    --timeout=180s
+    --timeout=60s
   environment:
     KUBECONFIG: "{{ kubeconfig_path }}"
   register: ingress_ready
-  retries: 3
-  delay: 20
+  retries: 2
+  delay: 10
   until: ingress_ready.rc == 0
   changed_when: false
+  failed_when: false
+
+- name: Warn if Ingress is not Ready yet (normal before workers join)
+  ansible.builtin.debug:
+    msg: >-
+      Ingress controller not Ready yet (Pending on control-plane taint is expected).
+      Workers play will join nodes; re-check with:
+      kubectl get pods -n ingress-nginx
+  when: ingress_ready.rc | default(1) != 0
 
 # Helm + EBS CSI + default gp3 StorageClass (PVCs for Postgres/Redis)
 - name: Install Helm, AWS EBS CSI driver, and gp3 StorageClass
@@ -261,13 +280,6 @@
 - name: Show cluster nodes
   ansible.builtin.debug:
     var: nodes_check.stdout_lines
-
-- name: Generate worker join command
-  ansible.builtin.command: kubeadm token create --print-join-command
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  register: kubeadm_join_command
-  changed_when: false
 
 - name: Confirm master setup complete
   ansible.builtin.debug:
