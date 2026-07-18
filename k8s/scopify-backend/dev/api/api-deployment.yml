@@ -17,8 +17,8 @@ spec:
         app: scopify-api
         environment: dev
     spec:
-      # imagePullSecrets:
-      #   - name: ghcr-pull
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: api
           image: ghcr.io/ashmit-gupta/scopify-backend:1.0.0

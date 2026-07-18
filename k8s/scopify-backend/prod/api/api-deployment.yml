@@ -19,8 +19,8 @@ spec:
         environment: prod
     spec:
       # Uncomment if GHCR package is private:
-      # imagePullSecrets:
-      #   - name: ghcr-pull
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: api
           image: ghcr.io/ashmit-gupta/scopify-backend:1.0.0
