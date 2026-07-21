@@ -1,0 +1,83 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Secrets are not listed — real *-secret.yml files are gitignored; apply once with kubectl.
+resources:
+  - namespace
+  - postgres
+  - redis
+  - migrate
+  - api
+  - ingress
+
+
+
+
+# What is Kustomize?
+# Kustomize is a Kubernetes tool that says: “take these YAML files (and optional patches), combine them, and produce one big manifest.”
+
+# You don’t template with {{ .Values }} like Helm. You keep normal YAML and list what to include in kustomization.yaml.
+
+# Common uses:
+
+# Bundle many files into one deployable unit (kubectl apply -k or Argo sync).
+# Patches (change replicas, image, labels) without copying whole files — you’re not doing that yet, but you could later.
+# One entrypoint per environment (dev/, prod/) so GitOps has a clear “deploy this folder.”
+# Before Kustomize in your repo, you were the bundler: you ran kubectl apply -f postgres/, then api/, etc. Argo with a plain Directory app on prod/ didn’t do that automatically unless you used recurse or Kustomize.
+
+# Why two levels of kustomization.yaml?
+# Level 1 — root (dev/kustomization.yaml)
+# resources:
+#   - namespace
+#   - postgres
+#   - redis
+#   - migrate
+#   - api
+#   - ingress
+# This means: “This environment is these six components.”
+# Argo (or kubectl apply -k scopify-backend/dev) only needs to look at dev/ — one path.
+
+# Each name (postgres, api, …) is a subfolder, not a single file.
+
+# Level 2 — inside each folder (postgres/kustomization.yaml)
+# resources:
+#   - postgres-deployment.yml
+#   - postgres-service.yml
+# Kustomize rule: if you reference a directory, that directory must be its own package — it needs its own kustomization.yaml that lists the actual .yml files inside.
+
+# So:
+
+# dev/kustomization.yaml          → “include postgres package”
+#     └── postgres/kustomization.yaml  → “postgres = these 2 YAML files”
+# Same for api/ (deployment + service), migrate/ (job only), etc.
+
+# dev/
+#   kustomization.yaml          ← Argo points HERE
+#   namespace/kustomization.yaml + namespace.yml
+#   postgres/kustomization.yaml + deployment + service
+#   api/kustomization.yaml + deployment + service
+#   ...
+# You don’t apply each inner kustomization by hand. Only the root is the entrypoint. Kustomize walks the tree and merges everything.
+
+# What happens at sync time (Argo)
+# Argo clones Scopify-Server and opens k8s/scopify-backend/dev.
+# It finds kustomization.yaml → uses Kustomize (not “flat directory”).
+# Kustomize loads namespace → reads namespace/kustomization.yaml → emits Namespace YAML.
+# Same for postgres, redis, migrate, api, ingress.
+# Argo compares that full set to the cluster and applies create/update/delete.
+# Jenkins still only edits api-deployment.yml and migrate-job.yml image lines; those files are still inside the api and migrate packages. Root kustomization doesn’t need to change when the image tag changes.
+
+# Before vs now
+# Before	Now
+# YAML only in subfolders
+# Same YAML files
+# kubectl apply -f each/folder/ or Jenkins did all applies
+# kubectl apply -k dev/ or Argo on dev/
+# Argo on prod/ saw no files in the root folder
+# Argo on dev/ sees one kustomization.yaml and gets all resources
+# No kustomization concept
+# Root = environment; inner = component bundles
+# Why secrets isn’t in the root list
+# Real secret files are gitignored. Kustomize only sees what’s in Git. Secrets stay one-time kubectl apply (or Sealed Secrets later). Everything else is GitOps.
+
+# One line: Root kustomization.yaml is “deploy all of dev”; each subfolder’s kustomization.yaml is “these files belong to postgres/api/…”. Argo runs Kustomize once at the root and gets the full app.

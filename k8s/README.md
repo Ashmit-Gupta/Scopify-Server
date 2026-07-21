@@ -1,6 +1,6 @@
 # Kubernetes manifests — Scopify Server
 
-Plain YAML (no Kustomize). Two environments as separate folders:
+Plain YAML per component; each env has a **`kustomization.yaml`** so Argo CD (and `kubectl apply -k`) can deploy the whole env. Two environments:
 
 | Folder | Namespace | Ingress host |
 |--------|-----------|--------------|
@@ -11,7 +11,9 @@ Plain YAML (no Kustomize). Two environments as separate folders:
 
 ```
 scopify-backend/prod/   (dev/ is the same)
+├── kustomization.yaml   # Argo / kubectl -k entrypoint (no secrets)
 ├── namespace/
+│   ├── kustomization.yaml
 │   └── namespace.yml
 ├── secrets/
 │   ├── postgres-secret.yml.example   # template (committed)
@@ -43,19 +45,22 @@ kubectl apply -f api-secret.yml
 
 Same for `prod/secrets/`. Real `*-secret.yml` files are gitignored.
 
-Jenkins does **not** apply secrets (avoids applying examples). Create them once before the first deploy.
+Jenkins does **not** apply secrets. Create them once before the first deploy.
 
-## Apply order (dev)
+## Argo CD
+
+Point each Application at `k8s/scopify-backend/dev` or `.../prod`. Argo detects `kustomization.yaml` and syncs all listed resources.
+
+## Apply manually (dev)
 
 ```bash
-cd k8s
+cd k8s/scopify-backend/dev/secrets
+# secrets: see above (required once, before or after namespace)
 
-kubectl apply -f scopify-backend/dev/namespace/
-# secrets: see above (required once)
-
-kubectl apply -f scopify-backend/dev/postgres/
-kubectl apply -f scopify-backend/dev/redis/
-# … then migrate, api, ingress (or let Jenkins Deploy do the rest)
+cd ../../..
+kubectl apply -k scopify-backend/dev
 ```
+
+Or apply folders individually as before (`kubectl apply -f scopify-backend/dev/postgres/`, etc.).
 
 If GHCR image is private, create `ghcr-pull` and uncomment `imagePullSecrets` in `api/api-deployment.yml`.
