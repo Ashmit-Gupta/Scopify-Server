@@ -13,6 +13,9 @@ edge_domain: "ashmit.xyz"
 jenkins_hostname: "jenkins.ashmit.xyz"
 sonar_hostname: "sonar.ashmit.xyz"
 nexus_hostname: "nexus.ashmit.xyz"
+k8s_dev_hostname: "dev.ashmit.xyz"
+k8s_aws_api_hostname: "aws-api.ashmit.xyz"
+k8s_argocd_hostname: "argocd.ashmit.xyz"
 
 # Timezone for all long-running Docker containers (Jenkins / Sonar / Nexus / Nginx)
 container_timezone: "Asia/Kolkata"

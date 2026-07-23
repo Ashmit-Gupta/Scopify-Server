@@ -54,6 +54,22 @@
     (groups['sonar'] | default([]) | length == 0) or
     (groups['nexus'] | default([]) | length == 0)
 
+- name: Resolve K8s worker private IPs for Ingress NodePort upstream
+  ansible.builtin.set_fact:
+    k8s_ingress_servers: >-
+      {{
+        k8s_ingress_servers | default([])
+        + [hostvars[item].private_ip | default(hostvars[item].ansible_host)]
+      }}
+  loop: "{{ groups['workers'] | default([]) }}"
+
+- name: Fail if K8s workers missing from inventory
+  ansible.builtin.fail:
+    msg: >-
+      Need at least one host in inventory group 'workers' (Role=worker-1 / worker-2)
+      so nginx can build the k8s_ingress upstream. Run terraform apply first.
+  when: (k8s_ingress_servers | default([]) | length) == 0
+
 - name: Check whether Let's Encrypt certificate already exists
   ansible.builtin.stat:
     path: "/etc/letsencrypt/live/{{ nginx_ssl_primary_hostname }}/fullchain.pem"
@@ -274,7 +290,10 @@
       https://{{ jenkins_hostname }},
       https://{{ sonar_hostname }},
       https://{{ nexus_hostname }},
-      https://test-k8s.{{ edge_domain }}.
+      https://{{ k8s_dev_hostname }},
+      https://{{ k8s_aws_api_hostname }},
+      https://{{ k8s_argocd_hostname }}.
       Upstreams: jenkins={{ jenkins_upstream }}:{{ jenkins_backend_port }},
       sonar={{ sonar_upstream }}:{{ sonar_backend_port }},
-      nexus={{ nexus_upstream }}:{{ nexus_backend_port }}
+      nexus={{ nexus_upstream }}:{{ nexus_backend_port }},
+      k8s_ingress={{ k8s_ingress_servers | join(',') }}:{{ k8s_ingress_nodeport }}

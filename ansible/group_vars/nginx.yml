@@ -34,3 +34,7 @@ nginx_ssl_force_wildcard: true
 jenkins_backend_port: 8080
 sonar_backend_port: 9000
 nexus_backend_port: 8081
+
+# K8s Ingress NodePort (Internet → Cloudflare → NGINX EC2 → workers:NodePort)
+# Worker private IPs come from inventory group 'workers' → nginx upstream k8s_ingress
+k8s_ingress_nodeport: 32522
