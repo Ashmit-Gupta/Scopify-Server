@@ -1,0 +1,110 @@
+# # Argo CD Application — kube-prometheus-stack (Prometheus + Grafana + Alertmanager)
+# #
+# # Apply once (Argo lives in namespace argocd):
+# #   kubectl apply -f k8s/platform/monitoring/application.yml
+# #
+# # Docs:
+# #   https://argo-cd.readthedocs.io/en/stable/user-guide/helm/
+# #   https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+# #   https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
+# #
+# apiVersion: argoproj.io/v1alpha1
+# kind: Application
+# metadata:
+#   name: kube-prometheus-stack
+#   namespace: argocd
+#   finalizers:
+#     - resources-finalizer.argocd.argoproj.io
+# spec:
+#   project: default
+#   source:
+#     repoURL: https://prometheus-community.github.io/helm-charts
+#     chart: kube-prometheus-stack
+#     # Pin a chart version; bump intentionally (see Artifact Hub)
+#     targetRevision: 72.6.2
+#     helm:
+#       releaseName: kube-prometheus-stack
+#       valueFiles: []
+#       values: |
+#         # ── Grafana ──────────────────────────────────────────────────────────
+#         grafana:
+#           enabled: true
+#           adminPassword: "CHANGE_ME"   # replace before first sync (or use SealedSecrets / ExternalSecrets)
+#           persistence:
+#             enabled: true
+#             storageClassName: gp3
+#             size: 10Gi
+#           ingress:
+#             enabled: true
+#             ingressClassName: nginx
+#             hosts:
+#               - grafana.ashmit.xyz
+#             path: /
+#             pathType: Prefix
+
+#         # ── Prometheus ───────────────────────────────────────────────────────
+#         # Keep UI internal; expose only if you add prometheus.ashmit.xyz to Nginx
+#         prometheus:
+#           prometheusSpec:
+#             retention: 15d
+#             storageSpec:
+#               volumeClaimTemplate:
+#                 spec:
+#                   storageClassName: gp3
+#                   accessModes: ["ReadWriteOnce"]
+#                   resources:
+#                     requests:
+#                       storage: 50Gi
+#           ingress:
+#             enabled: false
+
+#         # ── Alertmanager ─────────────────────────────────────────────────────
+#         alertmanager:
+#           alertmanagerSpec:
+#             storage:
+#               volumeClaimTemplate:
+#                 spec:
+#                   storageClassName: gp3
+#                   accessModes: ["ReadWriteOnce"]
+#                   resources:
+#                     requests:
+#                       storage: 10Gi
+#           ingress:
+#             enabled: false
+
+#         # Exporters / cluster scrapes (defaults are usually fine)
+#         nodeExporter:
+#           enabled: true
+#         kubeStateMetrics:
+#           enabled: true
+
+#   destination:
+#     server: https://kubernetes.default.svc
+#     namespace: monitoring
+
+#   syncPolicy:
+#     automated:
+#       prune: true
+#       selfHeal: true
+#     syncOptions:
+#       - CreateNamespace=true
+#       # Large CRDs exceed client-side apply annotation limits
+#       - ServerSideApply=true
+#       - RespectIgnoreDifferences=true
+#     retry:
+#       limit: 5
+#       backoff:
+#         duration: 5s
+#         factor: 2
+#         maxDuration: 3m
+
+#   # Chart injects CA bundles into webhooks; ignore drift so sync stays healthy
+#   ignoreDifferences:
+#     - group: admissionregistration.k8s.io
+#       kind: MutatingWebhookConfiguration
+#       jqPathExpressions:
+#         - ".webhooks[]?.clientConfig.caBundle"
+#     - group: admissionregistration.k8s.io
+#       kind: ValidatingWebhookConfiguration
+#       jqPathExpressions:
+#         - ".webhooks[]?.clientConfig.caBundle"
