@@ -11,6 +11,12 @@ map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
+
+# Cloudflare orange-cloud → use CF-Connecting-IP; DNS-only → $remote_addr
+map $http_cf_connecting_ip $edge_client_ip {
+    ""      $remote_addr;
+    default $http_cf_connecting_ip;
+}
 {% endraw %}
 
 # ─── Default (unknown Host) ───────────────────────────────────────────────────
@@ -66,9 +72,10 @@ server {
         proxy_pass http://{{ jenkins_upstream }}:{{ jenkins_backend_port }};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
         proxy_set_header Connection "";
         proxy_read_timeout 300;
 {% endif %}
@@ -92,9 +99,10 @@ server {
         proxy_pass http://{{ jenkins_upstream }}:{{ jenkins_backend_port }};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
         proxy_set_header Connection "";
         proxy_read_timeout 300;
     }
@@ -118,9 +126,10 @@ server {
         proxy_pass http://{{ sonar_upstream }}:{{ sonar_backend_port }};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 300;
@@ -143,9 +152,10 @@ server {
         proxy_pass http://{{ sonar_upstream }}:{{ sonar_backend_port }};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 300;
@@ -171,9 +181,10 @@ server {
         proxy_pass http://{{ nexus_upstream }}:{{ nexus_backend_port }};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
         proxy_read_timeout 300;
 {% endif %}
     }
@@ -196,9 +207,10 @@ server {
         proxy_pass http://{{ nexus_upstream }}:{{ nexus_backend_port }};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
         proxy_read_timeout 300;
     }
 }
@@ -228,9 +240,10 @@ server {
 {% else %}
         proxy_pass http://k8s_ingress;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
 {% endif %}
     }
 }
@@ -249,9 +262,10 @@ server {
     location / {
         proxy_pass http://k8s_ingress;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
     }
 }
 {% endif %}
@@ -272,9 +286,10 @@ server {
 {% else %}
         proxy_pass http://k8s_ingress;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
 {% endif %}
     }
 }
@@ -293,9 +308,10 @@ server {
     location / {
         proxy_pass http://k8s_ingress;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
     }
 }
 {% endif %}
@@ -316,9 +332,10 @@ server {
 {% else %}
         proxy_pass http://k8s_ingress;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
 {% endif %}
     }
 }
@@ -337,9 +354,10 @@ server {
     location / {
         proxy_pass http://k8s_ingress;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $edge_client_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
     }
 }
 {% endif %}

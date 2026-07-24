@@ -235,6 +235,35 @@
   until: ingress_apply.rc == 0
   changed_when: "'created' in ingress_apply.stdout or 'configured' in ingress_apply.stdout"
 
+# Edge Nginx → NodePort SNAT otherwise makes pods see worker IPs (e.g. 10.20.54.98).
+# Merge-patch so we do not wipe other ConfigMap keys from the upstream manifest.
+- name: Trust X-Forwarded-For from edge Nginx (real client public IP)
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    kubectl -n ingress-nginx patch configmap ingress-nginx-controller
+    --type merge
+    -p '{"data":{"use-forwarded-headers":"true","compute-full-forwarded-for":"true","enable-real-ip":"true","proxy-real-ip-cidr":"{{ vpc_cidr }}"}}'
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ingress_fwd_patch
+  changed_when: "'patched' in ingress_fwd_patch.stdout"
+  failed_when: false
+
+# Edge Nginx → NodePort SNAT hides the client IP unless Ingress trusts X-Forwarded-*.
+- name: Patch Ingress-Nginx to trust forwarded client IPs from edge Nginx
+  become: yes
+  become_user: "{{ kubeconfig_user }}"
+  ansible.builtin.command: >
+    kubectl -n ingress-nginx patch configmap ingress-nginx-controller
+    --type merge
+    -p '{"data":{"use-forwarded-headers":"true","compute-full-forwarded-for":"true","enable-real-ip":"true","proxy-real-ip-cidr":"{{ vpc_cidr }}"}}'
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ingress_fwd_patch
+  changed_when: "'patched' in ingress_fwd_patch.stdout"
+  failed_when: false
+
 - name: Wait until Ingress Controller pods are Ready (best-effort — needs workers)
   become: yes
   become_user: "{{ kubeconfig_user }}"
