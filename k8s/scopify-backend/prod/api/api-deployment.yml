@@ -23,7 +23,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: api
-          image: ghcr.io/ashmit-gupta/scopify-backend:835a650
+          image: ghcr.io/ashmit-gupta/scopify-backend:c21b68d
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
